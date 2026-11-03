@@ -248,21 +248,28 @@ export function createWorld(options = {}) {
     },
   };
 
+  // 模拟 Host 的工具面：预设工具（祖先层）+ profile 级 MCP 工具。
+  const hostToolNames = [
+    'read',
+    'glob',
+    'grep',
+    'web_search',
+    'web_fetch',
+    'ask_user_question',
+    'todo_write',
+    'session_search',
+    'write',
+    'edit',
+    'pwsh',
+    'bash',
+    'mcp__playwright__browser_click',
+    'mcp__playwright__browser_navigate',
+    'working_directory',
+    'load_workspace_dependencies',
+  ];
   services.tools = {
-    schemas: () => [
-      'read',
-      'glob',
-      'grep',
-      'web_search',
-      'web_fetch',
-      'ask_user_question',
-      'todo_write',
-      'session_search',
-      'write',
-      'edit',
-      'pwsh',
-      'bash',
-    ].map((name) => ({ name })),
+    schemas: () => hostToolNames.map((name) => ({ name })),
+    view: () => ({ restrictableNames: new Set(hostToolNames) }),
   };
   services.systemPrompt = { section: () => () => {} };
 

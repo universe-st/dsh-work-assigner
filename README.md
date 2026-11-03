@@ -105,7 +105,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 ## 开发与测试
 
 ```powershell
-npm test    # 31 个用例：纯策略、状态、投影、配置 + 模拟 Host 集成
+npm test    # 33 个用例：纯策略、状态、投影、配置、提示段/回报 + 模拟 Host 集成
 ```
 
 `test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截等。
@@ -115,7 +115,8 @@ npm test    # 31 个用例：纯策略、状态、投影、配置 + 模拟 Host 
 - 工程师会话被手动归档/删除时，相关任务会失败并回报经理。
 - 工程师忘调 `paihuo_report` 时，用最后一条 assistant 回复兜底并标注「未显式报告」。
 - worktree 只在 git 仓库生效；创建失败会退回项目目录并告警。
-- 经理守卫只放行只读工具与 `paihuo_*`；用 `/paihuo on` 进入的会话里写入类工具仍会显示，但调用会被拒绝。
+- 经理工具面按白名单收窄（只读 + `paihuo_*`），Profile 级 MCP 工具（如浏览器）不会进入经理 prompt；守卫仍兜底拒绝白名单之外的调用，包括作用域安装之后才注册的工具。
+- 经理提示段保持静态（不含实时工位数/工程师清单），避免每一步重装配 system prompt 时击穿整段上下文缓存；实时状态用 `paihuo_engineers` / `paihuo_tasks` 查询。
 
 ## 许可证
 

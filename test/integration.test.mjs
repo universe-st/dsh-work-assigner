@@ -51,6 +51,14 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.ok(restriction.allow.includes('ask_user_question'));
   assert.ok(!restriction.allow.includes('write'));
   assert.ok(!restriction.allow.includes('pwsh'));
+  // profile 级 MCP 工具与其它非白名单工具不能进经理 prompt（之前 allow 取自
+  // 全局视图、交集为空导致 restrict 被整体跳过，25 个浏览器工具一直留在里面）。
+  assert.ok(!restriction.allow.includes('mcp__playwright__browser_click'));
+  assert.ok(!restriction.allow.includes('mcp__playwright__browser_navigate'));
+  assert.ok(!restriction.allow.includes('working_directory'));
+  assert.ok(!restriction.allow.includes('load_workspace_dependencies'));
+  assert.ok(restriction.deny.includes('mcp__playwright__browser_click'));
+  assert.ok(!restriction.deny.includes('read'));
 
   // 预设作用域里的工具不受 restrict 掩码影响，真正兜底的是守卫。
   const guard = world.guards.find((entry) => entry.agentId === manager.id);

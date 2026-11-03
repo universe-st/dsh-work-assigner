@@ -105,7 +105,7 @@ You can also edit the profile's `cordis.patch.yml` directly:
 ## Development and tests
 
 ```powershell
-npm test    # 31 cases: pure policy, state, projection, config + simulated host integration
+npm test    # 33 cases: pure policy, state, projection, config, prompt/report + simulated host integration
 ```
 
 `test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, and permission path blocking.
@@ -115,7 +115,8 @@ npm test    # 31 cases: pure policy, state, projection, config + simulated host 
 - Manually archiving/deleting an engineer session fails its tasks and reports that to the manager.
 - If an engineer forgets `paihuo_report`, the last assistant reply is used and marked "no explicit report".
 - Worktrees only apply inside git repositories; a failed creation falls back to the project directory with a warning.
-- The manager guard allows only read-only tools and `paihuo_*`; sessions entered via `/paihuo on` still list write tools, but calls to them are rejected.
+- The manager tool surface is narrowed to the read-only whitelist plus `paihuo_*`, so profile-level MCP tools (e.g. browser) stay out of the manager prompt; the guard still rejects any call outside the whitelist, including tools registered after the scope is installed.
+- The manager prompt section stays static (no live workstation counts or engineer list) so re-assembling the system prompt on every step cannot invalidate the whole context cache; use `paihuo_engineers` / `paihuo_tasks` for live state.
 
 ## License
 
