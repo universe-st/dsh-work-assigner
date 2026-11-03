@@ -1,0 +1,67 @@
+{
+  "name": "dsh-paihuo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "派活：把任务派给工程师会话执行的经理模式（经理不阻塞、工程师并行、工位与排队受限）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/universe-st/dsh-work-assigner.git"
+  },
+  "homepage": "https://github.com/universe-st/dsh-work-assigner#readme",
+  "bugs": {
+    "url": "https://github.com/universe-st/dsh-work-assigner/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "paihuo",
+    "dispatch",
+    "manager",
+    "engineer",
+    "subagent"
+  ],
+  "dependencies": {
+    "@deepseek-ai/cosmokit": "~1.8.6",
+    "@deepseek-ai/schemastery": "~3.18.5",
+    "zod": "^4.6.7"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

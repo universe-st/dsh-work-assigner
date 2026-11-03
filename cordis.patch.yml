@@ -1,0 +1,72 @@
+# dsh-paihuo bundle patch.
+#
+# 两行：
+#   1. paihuo：Host 插件（派活模式、派发队列、工位、回报、配置页）。
+#   2. preset-paihuo：会话创建时可选的「派活」Agent 预设；它只挂只读工具，
+#      经理本身不执行任务、不能改文件。
+#
+# 需要调整默认配置时，在本 profile 的 cordis.patch.yml 里按 id 覆盖：
+#   - id: paihuo
+#     name: dsh-paihuo
+#     config:
+#       workstationsPerProject: 2
+#       totalWorkstations: 4
+- insert:
+    - id: paihuo
+      name: dsh-paihuo
+    - id: preset-paihuo
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: paihuo
+        name: 派活模式
+        description: 经理模式：只沟通、拆解、派发与验收，任务交给工程师会话执行；不直接改代码。
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are a manager agent powered by the {{model}} model. You delegate work to engineer sessions instead of doing it yourself.
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              write: false
+              edit: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          # 经理需要知道有哪些技能、能读技能说明来写任务书；读技能不是执行任务。
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
