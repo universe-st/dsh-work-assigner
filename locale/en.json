@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Paihuo",
-    "description": "Adds a dispatch mode: a manager session chats and delegates only, while engineer sessions execute the work. Non-blocking manager, parallel engineers, workstations and queues, urgent jump-in, isolated worktrees, completion reports, and permission/model limits."
+    "description": "Adds a dispatch mode: a manager session chats and delegates only, while engineer sessions execute the work. Non-blocking manager, parallel engineers, workstations and queues, urgent jump-in, isolated worktrees, completion reports, a question inbox, todos, and permission/model limits."
   }
 }

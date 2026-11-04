@@ -19,7 +19,7 @@
       config:
         id: paihuo
         name: 派活模式
-        description: 经理模式：只沟通、拆解、派发与验收，任务交给工程师会话执行；不直接改代码。
+        description: 经理模式：只沟通、拆解、派发与验收，任务交给工程师会话执行；不直接改代码。支持问题表与待办。
         order: 5
         plugins:
           - id: persona
@@ -42,12 +42,15 @@
             config:
               fetch: true
               searchTimeoutMs: 60000
+          # timed：问题默认 1 秒后转入问题表（userQuestions 投影），经理本轮
+          # 不会被长时间阻塞；确实必须同步等待时模型可显式传 timeout: -1。
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
-          - id: tool-todo
-            name: '@deepseek-ai/dsh-tool-todo'
             config:
-              allowParallelInProgress: true
+              mode: timed
+              timeout: 1
+          # 经理待办由本插件的 paihuo_todo 管理（持久、含暂停）。不再挂内置
+          # tool-todo：它每轮 turn/start 清空，且没有 paused 状态。
           # 经理需要知道有哪些技能、能读技能说明来写任务书；读技能不是执行任务。
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'

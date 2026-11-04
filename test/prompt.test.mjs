@@ -63,6 +63,11 @@ test('manager prompt section is static while task state changes', () => {
   assert.equal(second, first);
   assert.doesNotMatch(first, /当前运行/);
   assert.doesNotMatch(first, /在册工程师/);
+  // 问题表与待办提示必须是静态文本，不能随实时待办/问题数变化。
+  assert.match(first, /paihuo_todo/);
+  assert.match(first, /ask_user_question/);
+  assert.match(first, /问题表/);
+  assert.match(first, /不要用 `todo_write`/);
 });
 
 test('completion report is compact and points at paihuo_task', () => {

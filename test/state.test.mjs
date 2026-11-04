@@ -41,6 +41,31 @@ test('corrupt state falls back instead of throwing', () => {
   assert.deepEqual(hydrated.state, createEmptyState());
 });
 
+test('older state without todos upgrades with defaults', () => {
+  const legacy = {
+    version: 1,
+    nextSeq: 4,
+    managers: {},
+    engineers: {},
+    tasks: {},
+  };
+  const hydrated = hydrateState(legacy);
+  assert.equal(hydrated.recovered, false);
+  assert.deepEqual(hydrated.state.todos, {});
+  assert.equal(hydrated.state.nextTodoSeq, 1);
+  assert.equal(hydrated.state.nextSeq, 4);
+});
+
+test('a malformed todo list does not discard the task ledger', () => {
+  const state = createEmptyState();
+  state.tasks.t1 = task({ taskId: 't1', status: 'done' });
+  state.todos.bad = [{ id: 1, content: 'x', status: 'nope' }];
+  const hydrated = hydrateState(state);
+  assert.equal(hydrated.recovered, false);
+  assert.deepEqual(hydrated.state.todos, {});
+  assert.equal(hydrated.state.tasks.t1.status, 'done');
+});
+
 test('task ids are monotonic', () => {
   const state = createEmptyState();
   assert.equal(nextTaskId(state), 't1');

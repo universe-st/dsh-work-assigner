@@ -59,6 +59,10 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.ok(!restriction.allow.includes('load_workspace_dependencies'));
   assert.ok(restriction.deny.includes('mcp__playwright__browser_click'));
   assert.ok(!restriction.deny.includes('read'));
+  // 经理待办改用 paihuo_todo；内置 todo_write 不再出现在经理工具面。
+  assert.ok(world.toolDefs.has('paihuo_todo'));
+  assert.ok(!restriction.allow.includes('todo_write'));
+  assert.ok(restriction.deny.includes('todo_write'));
 
   // 预设作用域里的工具不受 restrict 掩码影响，真正兜底的是守卫。
   const guard = world.guards.find((entry) => entry.agentId === manager.id);
