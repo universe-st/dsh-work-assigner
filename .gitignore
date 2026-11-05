@@ -40,3 +40,6 @@ desktop.ini
 
 # Local worktrees created by the plugin / git
 .worktrees/
+
+# meow-memory 在本工作区的运行数据（记忆库 SQLite、dream 日志、会话缓存）
+.dsh-meow/

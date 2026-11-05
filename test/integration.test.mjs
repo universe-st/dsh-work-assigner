@@ -94,6 +94,25 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.ok(!restriction.allow.includes('todo_write'));
   assert.ok(restriction.deny.includes('todo_write'));
 
+  // 记忆插件整族放行：memory_* 只读写记忆库，不属于工作区改动。之前只放行
+  // 只读工具，dream 注入的整理任务没有写入口，只能空转。
+  for (const name of [
+    'memory_search',
+    'memory_read',
+    'memory_project',
+    'memory_find_similar',
+    'memory_remember',
+    'memory_update',
+    'memory_dream',
+    'memory_home',
+  ]) {
+    assert.ok(restriction.allow.includes(name), `${name} must stay visible to the manager`);
+    assert.ok(!restriction.deny.includes(name), `${name} must not be denied`);
+  }
+  // 按 `memory_` 前缀放行：记忆插件以后新增工具（这里是 memory_topic）同样可用。
+  assert.ok(restriction.allow.includes('memory_topic'));
+  assert.ok(!restriction.deny.includes('memory_topic'));
+
   // 预设作用域里的工具不受 restrict 掩码影响，真正兜底的是守卫。
   const guard = world.guards.find((entry) => entry.agentId === manager.id);
   assert.ok(guard, 'manager must install a tool guard');
@@ -102,6 +121,11 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.equal(guard.guard({ name: 'read' }), undefined);
   assert.equal(guard.guard({ name: 'skill' }), undefined);
   assert.equal(guard.guard({ name: 'paihuo_dispatch' }), undefined);
+  // 记忆写入不是执行任务：守卫必须放行，否则 dream 整理无法落库。
+  assert.equal(guard.guard({ name: 'memory_remember' }), undefined);
+  assert.equal(guard.guard({ name: 'memory_update' }), undefined);
+  assert.equal(guard.guard({ name: 'memory_dream' }), undefined);
+  assert.equal(guard.guard({ name: 'memory_topic' }), undefined);
 
   const result = await runDispatch(world, manager, {
     title: '补充 README 说明',

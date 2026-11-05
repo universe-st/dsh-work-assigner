@@ -266,6 +266,17 @@ export function createWorld(options = {}) {
     'mcp__playwright__browser_navigate',
     'working_directory',
     'load_workspace_dependencies',
+    // 记忆插件（meow-memory）的整族工具：只读写记忆库，不进工作区。
+    'memory_search',
+    'memory_read',
+    'memory_project',
+    'memory_find_similar',
+    'memory_remember',
+    'memory_update',
+    'memory_dream',
+    'memory_home',
+    // 插件以后新增的记忆工具：按 `memory_` 前缀放行，不该又要改白名单。
+    'memory_topic',
   ];
   services.tools = {
     schemas: () => hostToolNames.map((name) => ({ name })),
