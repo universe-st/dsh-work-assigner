@@ -5,8 +5,9 @@
 **[English](README.en.md)** | 简体中文
 
 - **经理不阻塞**：派发工具立即返回，本轮直接结束，用户可以接着说下一个需求。
+- **待办强制核对**：每轮结束前若没有查看/修改待办，系统会在同一轮内强制提醒经理先 `list`、对照真实任务状态修正，再结束；避免回复用户时清单已经过期。
 - **经理不动手**：预制预设只挂只读工具，插件再用工具守卫兜底；改文件、跑构建一律交给工程师。
-- **工程师并行**：受工位、单工程师排队、全局串行资源三层约束，前端测试不会互抢浏览器。
+- **工程师并行**：受工位、单工程师排队、全局串行资源三层约束，前端测试不会互抢浏览器；同一项目的主工作区任务（合并、发布、改文档）自动互斥。
 - **独立 worktree**：每个工程师一个分支，改动隔离；验收后用 `paihuo_integrate` 合回基线分支并跑测试。
 - **角色可见**：会话列表按角色着色（经理蓝底白字、工程师黄底黑字），回报在聊天里显示为「📋 派活回报」卡片。
 - **问题表**：经理提问默认 1 秒后转入右上角「问题表」，红圈数字是待回答的问题数；用户点开弹窗回答，经理继续处理该任务。
@@ -42,7 +43,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 5. 验收报告与分支，需要合并时用 `paihuo_integrate` 合入用户下发任务时所处的分支（或 `target_branch`）。
 6. 某个工程师不再需要时，用 `paihuo_release` 把它恢复成普通会话。
 7. 需要用户确认/选择/补充信息时用 `ask_user_question`。经理预设是 timed 模式，默认 1 秒后把问题转入右上角**问题表**，经理本轮不被长时间阻塞；只有没有答案就绝不能继续时才传 `timeout: -1`。
-8. 多步骤工作先用 `paihuo_todo` 建**待办**，开始/暂停/恢复/完成都通过同一个工具维护；右上角「待办」入口展示当前清单。
+8. 多步骤工作先用 `paihuo_todo` 建**待办**，开始/暂停/恢复/完成都通过同一个工具维护；右上角「待办」入口展示当前清单。每轮结束前若没有查看/修改待办，系统会注入 `【派活系统提醒】`，收到后先 `list`、对照 `paihuo_tasks` / `paihuo_engineers` 修正，再结束本轮。最多提醒 2 次，避免死循环。
 
 用户**不要**在工程师会话里对话；那是执行现场，点开只能看进度。
 
@@ -50,11 +51,14 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 
 - **问题表**：经理会话右上角的 💬 图标，红圈数字是 `userQuestions` 投影里仍未回答的问题数。弹窗按提问批次分组，可选预设选项、填写自定义答案或跳过；提交后由 Host 把回答作为 `answer_to_pending_question` 用户消息送回经理会话。仍在等待前台回答（`open`）的问题可以直接打开 DSH 自带的问答面板。
 - **待办**：经理会话右上角的 🗒️ 图标，数字是未完成待办数。经理通过 `paihuo_todo` 维护；状态为 `pending`（待办）、`in_progress`（进行中）、`paused`（暂停）、`completed`（已完成）。面板是只读的，按状态分组，已完成项可折叠。待办按经理会话隔离，页面刷新与插件重载后保留；`/paihuo off` 后入口隐藏，再进入经理模式仍可见。
+- **强制核对**：每个经理轮次结束前，如果本轮没有一次成功的 `paihuo_todo` 调用，插件会通过 `agent/turn-stopping` 在同一轮内注入 `【派活系统提醒】`，要求经理先 `list`、再按真实任务状态更新；最多提醒 2 次，之后放行并记录 warning。第一次回复已经发出，核对后的补充回复会追加在同一轮里。
 
 ### worktree 规则
 
 - **建（默认）**：会改代码/文档、多个工程师并行改同一批文件、需要独立跑构建测试。
 - **不建（需给 `worktree_reason`）**：只读分析、必须读取主工作区未提交改动、必须在主工作区跑集成测试或部署。
+- **复用工程师**：`worktree` 参数对复用无效，任务沿用该工程师现有工作目录；回执会写明实际是独立 worktree 还是主工作区，不会再出现“回执说建了 worktree、实际在主工作区”的误报。
+- **主工作区互斥**：同一项目里 `worktree=false` 的任务（合并、发布、改文档）同一时刻只跑一个；第二个排队并在回执里说明被哪个任务占用。独立 worktree 任务不受影响，仍可并行。
 - `config.worktree=false` 是总开关；创建失败会写进派发回执，不再静默退回。
 
 ### 工程师怎么工作
@@ -67,14 +71,14 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 
 | 工具 | 说明 |
 |---|---|
-| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources:["browser"]` |
+| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名） |
 | `paihuo_engineers` | 名下工程师与状态 |
-| `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情 |
+| `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
 | `paihuo_message` | 给工程师追加消息；`mode:"steer"` 立即插入当前轮 |
 | `paihuo_cancel` | 取消排队或运行中的任务 |
-| `paihuo_integrate` | 派工程师把已完成任务的分支合入目标分支，处理冲突并跑测试 |
+| `paihuo_integrate` | 派工程师把已完成任务的分支合入目标分支，处理冲突并跑测试；`notes` 可写本次合并的额外核验/测试范围 |
 | `paihuo_release` | 把空闲的工程师会话恢复成普通会话 |
-| `paihuo_todo` | 维护经理待办：`action: add/update/start/pause/resume/complete/remove/clear/list`；只对经理可见 |
+| `paihuo_todo` | 维护经理待办：`action: add/update/start/pause/resume/complete/remove/clear/list`；只对经理可见；每轮未核对会被系统提醒 |
 
 经理预设还保留了 `ask_user_question`，并使用 `mode: timed` / `timeout: 1`；内置 `todo_write` 已从经理预设移除（每轮清空且没有暂停，改由 `paihuo_todo` 承担）。
 
@@ -88,7 +92,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | 单项目 / 全局同时运行的工程师上限 |
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
-| `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务 |
+| `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务；可加入 `env127` 之类的共享环境名，发布/验证/造数任务带上同名 `resources` 即可互斥 |
 | `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设 |
 | `managerSection` / `engineerSection` | `null` | 覆盖内置提示词段 |
 
@@ -105,7 +109,12 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
     workstationsPerProject: 2
     totalWorkstations: 4
     worktree: true
+    serializedResources:
+      - browser
+      - env127
 ```
+
+带 `resources: ["env127"]` 的发布、验证、造数任务会全局互斥；主工作区任务（合并/发布/改文档）另有按项目的自动互斥，不需要额外声明。
 
 ## 权限
 
@@ -117,7 +126,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 ## 开发与测试
 
 ```powershell
-npm test    # 46 个用例：纯策略、状态、待办状态机、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + 客户端装配/语法
+npm test    # 58 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + 客户端装配/语法
 ```
 
 `test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截等。
@@ -126,7 +135,10 @@ npm test    # 46 个用例：纯策略、状态、待办状态机、投影、配
 
 - 工程师会话被手动归档/删除时，相关任务会失败并回报经理。
 - 工程师忘调 `paihuo_report` 时，用最后一条 assistant 回复兜底并标注「未显式报告」。
-- worktree 只在 git 仓库生效；创建失败会退回项目目录并告警。
+- worktree 只在 git 仓库生效；创建失败会退回主工作区并告警；退回时仍受主工作区互斥约束。
+- 待办强制核对依赖 DSH 的 `agent/turn-stopping`：旧 Host 没有该事件时不会提醒，其余功能正常。
+- 强制核对发生在回复之后：第一次回复已经发出，提醒后的核对会在同一轮追加一条简短回复；连续忽略提醒最多 2 次后放行并记录 warning。核对只保证经理看到并有机会修正，不保证内容一定正确。
+- 合并任务的 worktree 与分支目前不会自动删除；需要时手动清理。
 - 经理工具面按白名单收窄（只读 + `paihuo_*`），Profile 级 MCP 工具（如浏览器）不会进入经理 prompt；守卫仍兜底拒绝白名单之外的调用，包括作用域安装之后才注册的工具。
 - 经理提示段保持静态（不含实时工位数/工程师清单/待办数），避免每一步重装配 system prompt 时击穿整段上下文缓存；实时状态用 `paihuo_engineers` / `paihuo_tasks` 查询。
 - 问题表只展示 timed `ask_user_question` 产生的问题；预设改为 timed 之前的历史问题不会进入投影。`timeout: -1` 的 open 问题需要在 DSH 自带的问答面板里回答，问题表弹窗只提供打开入口。

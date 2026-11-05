@@ -30,6 +30,29 @@ function runDispatch(world, manager, args) {
   });
 }
 
+function runTool(world, manager, name, args) {
+  const definition = world.toolDefs.get(name);
+  assert.ok(definition, `${name} should be registered`);
+  return definition.execute(args, {
+    agent: manager,
+    callId: `call-${name}`,
+    signal: new AbortController().signal,
+  });
+}
+
+async function fireTurnStopping(world, manager, turn) {
+  const handlers = world.handlers.get('agent/turn-stopping') ?? [];
+  for (const handler of handlers) {
+    await handler({ turn, agent: manager, signal: new AbortController().signal });
+  }
+}
+
+function todoReminders(world, manager) {
+  return world.prompts.filter((entry) => (
+    entry.sessionId === manager.id && entry.text.includes('派活系统提醒')
+  ));
+}
+
 test('manager mode delegates, engineer reports, manager is woken', async () => {
   const world = createWorld();
   const manager = await boot(world);
@@ -245,4 +268,170 @@ test('the paihuo agent preset creates a manager without /paihuo on', async () =>
   assert.equal(off.result.kind, 'success', off.result.text);
   assert.equal(session.header.agentPreset, 'standard');
   assert.equal(session.title, '测试会话');
+});
+
+test('reusing an engineer reports the actual main workspace', async () => {
+  const world = createWorld({ config: { worktree: false, workstationsPerProject: 2, totalWorkstations: 2 } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const first = await runDispatch(world, manager, { title: '任务 A', brief: '执行 A。' });
+  assert.equal(first.status, 'running');
+  const engineer = world.agents.get(first.engineer);
+  world.append(engineer.session, 'turn/start', { turn: 1 });
+  world.append(engineer.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  await settle(80);
+
+  const second = await runDispatch(world, manager, {
+    title: '任务 B',
+    brief: '在同一个主工作区继续执行 B。',
+    engineer: first.engineer,
+  });
+  assert.equal(second.status, 'running');
+  assert.match(second.text, /复用工程师/);
+  assert.doesNotMatch(second.text, /独立 worktree/);
+});
+
+test('main-workspace tasks queue behind each other', async () => {
+  const world = createWorld({ config: { worktree: false, workstationsPerProject: 2, totalWorkstations: 2 } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const first = await runDispatch(world, manager, { title: '任务 A', brief: '执行 A。' });
+  const second = await runDispatch(world, manager, { title: '任务 B', brief: '执行 B。' });
+  assert.equal(first.status, 'running');
+  assert.equal(second.status, 'queued');
+  assert.match(second.text, /主工作区正被/);
+
+  const engineer = world.agents.get(first.engineer);
+  world.append(engineer.session, 'turn/start', { turn: 1 });
+  world.append(engineer.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  await settle(100);
+
+  assert.equal(world.stored.tasks[first.task_id].status, 'done');
+  assert.equal(world.stored.tasks[second.task_id].status, 'running');
+});
+
+test('paihuo_task omits the brief unless requested', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const result = await runDispatch(world, manager, { title: '任务 A', brief: 'UNIQUE_BRIEF_TEXT' });
+  const short = await runTool(world, manager, 'paihuo_task', { task_id: result.task_id });
+  assert.doesNotMatch(short.text, /UNIQUE_BRIEF_TEXT/);
+  assert.match(short.text, /include_brief/);
+
+  const full = await runTool(world, manager, 'paihuo_task', {
+    task_id: result.task_id,
+    include_brief: true,
+  });
+  assert.match(full.text, /UNIQUE_BRIEF_TEXT/);
+});
+
+test('paihuo_integrate passes notes and the untracked-file policy', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const result = await runDispatch(world, manager, { title: '任务 A', brief: '执行 A。' });
+  const engineer = world.agents.get(result.engineer);
+  world.append(engineer.session, 'turn/start', { turn: 1 });
+  const report = await runTool(world, engineer, 'paihuo_report', {
+    task_id: result.task_id,
+    outcome: 'success',
+    summary: '完成',
+    branch: 'paihuo/fake',
+  });
+  assert.equal(report.task_id, result.task_id);
+  world.append(engineer.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  await settle(80);
+
+  const target = world.stored.tasks[result.task_id].baseBranch;
+  assert.ok(typeof target === 'string' && target !== '');
+  const integrated = await runTool(world, manager, 'paihuo_integrate', {
+    task_id: result.task_id,
+    target_branch: target,
+    notes: 'ONLY_AFFECTED_TESTS',
+  });
+  assert.equal(integrated.status, 'running');
+  const mergePrompt = world.prompts.find((entry) => entry.text.includes('## 经理补充'));
+  assert.ok(mergePrompt, 'merge engineer should receive manager notes');
+  assert.match(mergePrompt.text, /ONLY_AFFECTED_TESTS/);
+  assert.match(mergePrompt.text, /--porcelain=v1 -uno/);
+});
+
+test('manager turns without a todo check are forced to review todos', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  world.append(manager.session, 'turn/start', { turn: 1 });
+  await fireTurnStopping(world, manager, 1);
+  assert.equal(todoReminders(world, manager).length, 1);
+  assert.equal(todoReminders(world, manager)[0].mode, 'steer');
+
+  world.append(manager.session, 'tool/call', {
+    turn: 1,
+    step: 1,
+    callId: 'todo-1',
+    name: 'paihuo_todo',
+    arguments: '{"action":"list"}',
+  });
+  world.append(manager.session, 'tool/result', {
+    turn: 1,
+    step: 1,
+    message: {
+      role: 'tool',
+      toolCallId: 'todo-1',
+      content: [{ type: 'text', text: '待办（0）' }],
+      isError: false,
+    },
+  });
+  await fireTurnStopping(world, manager, 1);
+  assert.equal(todoReminders(world, manager).length, 1, 'a successful todo call satisfies the guard');
+
+  world.append(manager.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  world.append(manager.session, 'turn/start', { turn: 2 });
+  await fireTurnStopping(world, manager, 2);
+  assert.equal(todoReminders(world, manager).length, 2, 'the next turn starts a fresh check');
+});
+
+test('a failed todo call does not satisfy the guard', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  world.append(manager.session, 'turn/start', { turn: 1 });
+  world.append(manager.session, 'tool/call', {
+    turn: 1,
+    step: 1,
+    callId: 'todo-failed',
+    name: 'paihuo_todo',
+    arguments: '{"action":"list"}',
+  });
+  world.append(manager.session, 'tool/result', {
+    turn: 1,
+    step: 1,
+    message: {
+      role: 'tool',
+      toolCallId: 'todo-failed',
+      content: [{ type: 'text', text: '待办服务不可用' }],
+      isError: true,
+    },
+  });
+  await fireTurnStopping(world, manager, 1);
+  assert.equal(todoReminders(world, manager).length, 1);
+});
+
+test('todo guard nudges at most twice per turn', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  world.append(manager.session, 'turn/start', { turn: 1 });
+  await fireTurnStopping(world, manager, 1);
+  await fireTurnStopping(world, manager, 1);
+  await fireTurnStopping(world, manager, 1);
+  assert.equal(todoReminders(world, manager).length, 2);
 });

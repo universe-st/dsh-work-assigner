@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildManagerSection, buildReportMessage } from '../lib/prompt.js';
+import { buildManagerSection, buildReportMessage, buildTodoCheckReminder } from '../lib/prompt.js';
 
 function fakeRuntime() {
   return {
@@ -12,6 +12,7 @@ function fakeRuntime() {
       worktree: true,
       workstationsPerProject: 2,
       totalWorkstations: 4,
+      serializedResources: ['browser', 'env127'],
     },
     store: {
       get: () => ({
@@ -68,6 +69,9 @@ test('manager prompt section is static while task state changes', () => {
   assert.match(first, /ask_user_question/);
   assert.match(first, /问题表/);
   assert.match(first, /不要用 `todo_write`/);
+  assert.match(first, /env127/);
+  assert.match(first, /共享环境/);
+  assert.match(first, /强制核对/);
 });
 
 test('completion report is compact and points at paihuo_task', () => {
@@ -92,4 +96,44 @@ test('completion report is compact and points at paihuo_task', () => {
   assert.match(text, /paihuo_task/);
   assert.match(text, /"task_id": "t7"/);
   assert.match(text, /等 20 项/);
+});
+
+test('report does not suggest integrating a main-workspace commit', () => {
+  const task = {
+    taskId: 't8',
+    title: '部署验证',
+    status: 'done',
+    projectPath: 'D:\\Workspace\\proj',
+    baseBranch: 'master',
+    report: { outcome: 'success', summary: '已完成', branch: 'master' },
+  };
+  const text = buildReportMessage(task, { sessionId: 'session-e1', worktree: null });
+  assert.doesNotMatch(text, /paihuo_integrate/);
+  assert.doesNotMatch(text, /验收后用/);
+});
+
+test('integration report says the branch is already merged', () => {
+  const task = {
+    taskId: 't9',
+    title: '合并 paihuo/t9 → master',
+    status: 'done',
+    projectPath: 'D:\\Workspace\\proj',
+    baseBranch: 'master',
+    integration: { sourceTaskId: 't7', branch: 'paihuo/t7', target: 'master' },
+    report: { outcome: 'success', summary: '合并完成', branch: 'master' },
+  };
+  const text = buildReportMessage(task, { sessionId: 'session-e2', worktree: null });
+  assert.match(text, /已合入/);
+  assert.doesNotMatch(text, /验收后用/);
+  assert.doesNotMatch(text, /目标分支：master（验收后/);
+});
+
+test('todo check reminder tells the manager to list and reconcile', () => {
+  const text = buildTodoCheckReminder();
+  assert.match(text, /不是用户消息/);
+  assert.match(text, /paihuo_todo/);
+  assert.match(text, /action": "list/);
+  assert.match(text, /paihuo_tasks/);
+  assert.match(text, /paihuo_engineers/);
+  assert.match(text, /强制核对/);
 });
