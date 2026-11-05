@@ -63,6 +63,7 @@ test('client factory registers settings, report cards and manager header slots',
 
   const registrations = [];
   const effects = [];
+  const eventDefinitions = [];
   const ctx = {
     effect(execute) {
       effects.push(execute);
@@ -90,7 +91,8 @@ test('client factory registers settings, report cards and manager header slots',
     },
     uiConversation: {
       events: {
-        register() {
+        register(definition) {
+          eventDefinitions.push(definition);
           return () => {};
         },
       },
@@ -108,5 +110,33 @@ test('client factory registers settings, report cards and manager header slots',
   assert.ok(ids.includes('paihuo-questions'));
   assert.ok(ids.includes('paihuo-todos'));
   assert.ok(ids.includes('paihuo-report'));
+  assert.ok(ids.includes('paihuo-todo-notice'));
   assert.ok(ids.includes('paihuo'));
+
+  // 待办强制核对提醒：匹配后只生成一个可见的紧凑节点，不把提醒正文透传。
+  const notice = eventDefinitions.find((entry) => entry.kind === 'paihuo-todo-notice');
+  assert.ok(notice, 'todo notice event definition should be registered');
+  const reminder = '【派活系统提醒｜不是用户消息】\n你在本轮结束前没有查看或修改待办清单。\n【派活系统提醒结束】';
+  const event = {
+    type: 'user/message',
+    seq: 12,
+    data: { id: 'message-1', content: [{ type: 'text', text: reminder }] },
+  };
+  const match = notice.match(event);
+  assert.equal(match.id, 'message-1');
+  assert.equal(match.role, 'start');
+  assert.equal(match.exclusive, true);
+  const node = notice.buildViewNode({
+    key: 'node-1',
+    id: 'message-1',
+    start: { event, location: 'tail' },
+    state: {},
+  });
+  assert.equal(node.kind, 'paihuo-todo-notice');
+  assert.equal(node.visibility, 'visible');
+  assert.deepEqual(node.data, {});
+  assert.equal(notice.match({
+    type: 'user/message',
+    data: { id: 'message-2', content: [{ type: 'text', text: '普通用户消息' }] },
+  }), null);
 });
