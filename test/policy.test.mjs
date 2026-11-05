@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { resolve, sep } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -18,9 +19,13 @@ import {
   workspaceModeOf,
 } from '../lib/policy.js';
 
-const root = 'C:\\work\\demo';
-const child = 'C:\\work\\demo\\packages\\app';
-const sibling = 'C:\\work\\other';
+// 平台无关夹具：用 node:path 拼绝对路径，POSIX 下是 /work/demo，
+// Windows 下是 <当前盘>:\work\demo，两边都走真实的 resolve/sep 语义。
+const root = resolve(sep, 'work', 'demo');
+const child = resolve(root, 'packages', 'app');
+const sibling = resolve(sep, 'work', 'other');
+const lookalike = resolve(sep, 'work', 'demo2');
+const elsewhere = resolve(sep, 'elsewhere');
 
 test('sandboxRank orders confinement levels', () => {
   assert.ok(sandboxRank('read-only') < sandboxRank('workspace-write'));
@@ -32,11 +37,17 @@ test('isInside treats equality and descendants as inside', () => {
   assert.equal(isInside(root, root), true);
   assert.equal(isInside(root, child), true);
   assert.equal(isInside(root, sibling), false);
-  assert.equal(isInside(root, 'C:\\work\\demo2'), false);
+  assert.equal(isInside(root, lookalike), false);
+});
+
+// Windows 盘符与目录名大小写不敏感；其余平台这条行为不适用，跳过。
+test('isInside is case-insensitive on Windows', { skip: process.platform !== 'win32' }, () => {
+  assert.equal(isInside(root.toUpperCase(), child.toLowerCase()), true);
+  assert.equal(isInside(root.toLowerCase(), child.toUpperCase()), true);
 });
 
 test('canDispatchTo follows the permission rule', () => {
-  assert.equal(canDispatchTo('danger-full-access', root, 'D:\\elsewhere'), true);
+  assert.equal(canDispatchTo('danger-full-access', root, elsewhere), true);
   assert.equal(canDispatchTo('workspace-write', root, child), true);
   assert.equal(canDispatchTo('workspace-write', root, sibling), false);
   assert.equal(canDispatchTo('read-only', root, sibling), false);

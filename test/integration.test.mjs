@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 
 import { apply } from '../lib/index.js';
 import { createWorld, PROJECT, settle } from './harness.mjs';
+
+/**
+ * 仓库目录之外的另一个真实目录，平台无关：POSIX 下是 /var/folders/…，
+ * Windows 下是 C:\Users\…\AppData\Local\Temp，两边都与 PROJECT 没有包含关系。
+ */
+const OUTSIDE_PROJECT = tmpdir();
 
 async function boot(world) {
   apply(world.ctx, world.config);
@@ -156,7 +163,7 @@ test('workstation limits queue the second task and release it on completion', as
 });
 
 test('workspace-write managers cannot dispatch outside their working directory', async () => {
-  const outside = 'D:\\Workspace\\myworks';
+  const outside = OUTSIDE_PROJECT;
   const world = createWorld({ managerSandbox: 'workspace-write', managerPreset: 'workspace-write' });
   const manager = await boot(world);
   await enterMode(world, manager);
@@ -172,7 +179,7 @@ test('workspace-write managers cannot dispatch outside their working directory',
 });
 
 test('danger-full-access managers may dispatch to another existing project', async () => {
-  const outside = 'D:\\Workspace\\myworks';
+  const outside = OUTSIDE_PROJECT;
   const world = createWorld({ managerSandbox: 'danger-full-access', managerPreset: 'danger-full-access' });
   const manager = await boot(world);
   await enterMode(world, manager);
