@@ -1,6 +1,6 @@
 # Paihuo (dsh-paihuo)
 
-A manager–engineer mode for DeepSeek Harness: the current session becomes a **manager** that only chats, plans, dispatches and reviews, while the actual work runs in **engineer** sessions created automatically by the plugin.
+A manager–engineer mode for DeepSeek Harness: the current session becomes a **manager** that only chats, plans, dispatches and reviews, while the actual work runs in **engineer** sessions created automatically by the plugin or in local Codex CLI subagents.
 
 English | **[简体中文](README.md)**
 
@@ -9,6 +9,7 @@ English | **[简体中文](README.md)**
 - **The manager never does the work**: the preset only mounts read-only tools, and a tool guard enforces it. File edits and builds always go to engineers.
 - **Parallel engineers**: bounded by per-project and global workstations, per-engineer queues, and globally serialized resources (so front-end tests never fight over the browser). Main-workspace tasks (merge, deploy, docs) in the same project are mutually exclusive.
 - **Isolated worktrees**: one git worktree and branch per engineer; merge back with `paihuo_integrate` after review.
+- **Codex subagent mode**: switch the executor backend to `codex` and the plugin calls the local Codex CLI directly; the same Codex session can be reused and messaged. A 🤖 entry in the manager header shows each Codex subagent's session content.
 - **Visible roles**: sessions are color-coded in the list (manager = blue, engineer = yellow), and reports appear as a collapsible "📋 Paihuo report" card.
 - **Question inbox**: manager questions become non-blocking after one second and move to a top-right inbox with a red count badge; answering in the popup resumes the manager's task.
 - **Todos**: the manager maintains a persistent list with add/start/pause/resume/update/complete actions; the top-right panel shows the list and survives turns and reloads.
@@ -65,35 +66,93 @@ Do **not** chat inside engineer sessions — they are the work site; open one on
 
 Engineer sessions carry a `👷` prefix and receive one self-contained task message (goal, directory, acceptance, tests). They execute within their permissions and **must** call `paihuo_report` at the end. With a worktree, they stay inside their own directory and commit only to their own branch.
 
+### Codex subagent mode
+
+The default executor backend is a session engineer (`engineerBackend: "session"`). Switch Settings → Paihuo → **Executor backend** to “Codex CLI”, or set `engineerBackend: "codex"`, and the plugin invokes the local `codex` command directly.
+
+**Prerequisites**
+
+- Codex CLI is installed and logged in: `codex --version` works and `codex exec resume --help` prints usage.
+- The command defaults to `codex`; `codexCommand` can point at an absolute path or wrapper.
+- Codex approvals and sandbox are controlled by `codexSandbox` / `codexBypassApprovals` and Codex native config. They do **not** inherit the manager's permission preset.
+- The model can be selected in Settings from the live `codex debug models` list, or left empty for the Codex native default; `codexModel` fixes it.
+- Reasoning effort is selected next to the model: choices come from that model's `supported_reasoning_levels`; empty uses the model default, and `codexReasoningEffort` fixes it.
+
+```yaml
+- id: paihuo
+  name: dsh-paihuo
+  config:
+    engineerBackend: codex
+    codexCommand: codex
+    codexModel: gpt-6.1-sol        # optional; the config page reads codex debug models
+    codexReasoningEffort: high     # optional; the config page lists the model's levels
+    codexSandbox: workspace-write
+    codexBypassApprovals: false
+```
+
+**Behavior**
+
+- The first run uses `codex exec --json` and stores the returned `thread_id`; further tasks or messages for the same engineer use `codex exec resume <thread_id>`.
+- Reuse works: pass `engineer` or `reuse: "auto"` to `paihuo_dispatch`. Development and testing still need different engineers.
+- `paihuo_message` on a running task:
+  - `queue`: after the current Codex turn, append another turn in the same session;
+  - `steer`: terminate the current CLI process and resume the same session with the message (failure is reported if the session cannot be resumed).
+- An idle Codex engineer accepts `paihuo_message` and runs a supplementary turn; the reply comes back as a “【Paihuo supplement】” message.
+- `paihuo_release` removes an idle Codex engineer from the plugin; the native Codex session file remains on disk.
+- Workstations, queues, `priority: "urgent"`, serialized resources, the main-workspace lock and worktrees still apply. In a worktree task, Codex must commit its changes to its branch; otherwise the task is reported as blocked.
+- `paihuo_integrate` also uses a Codex engineer in this mode, merging in the main workspace and running tests.
+
+### 🤖 Codex subagent menu
+
+In Codex mode, the manager header gains a 🤖 entry:
+
+- It lists the manager's Codex engineers: running/idle, current task, model, project, worktree branch and Codex session id.
+- Selecting one shows tasks/manager notes, Codex replies, commands with truncated output, and errors; replies are rendered as Markdown.
+- Commands are collapsed by default; expand one to see the full command and output. A session opens at the top without clipping the first line.
+- Running sessions update about every 0.5s and new replies are revealed progressively. The view follows the bottom while it is pinned there, stays put when scrolled away, and offers a “↓” button to jump back.
+- The panel is read-only and offers no messaging or cancellation controls.
+- Data comes from the `codex exec --json` events captured by this plugin, not Codex internal reasoning. Command output can be disabled with `codexTranscriptOutput: false`.
+- After switching back to session mode, the entry remains while old Codex engineer records exist and disappears after `paihuo_release`.
+
 ## Tools
 
 Manager (visible only in manager sessions):
 
 | Tool | Purpose |
 |---|---|
-| `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name) |
-| `paihuo_engineers` | Engineers under this manager and their state |
+| `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name). In Codex mode `model` is a Codex model id |
+| `paihuo_engineers` | Executors under this manager and their state; Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
-| `paihuo_message` | Send a follow-up to an engineer; `mode:"steer"` injects it into the running turn |
-| `paihuo_cancel` | Cancel a queued or running task |
-| `paihuo_integrate` | Dispatch an engineer to merge a finished task's branch into the target branch, resolve conflicts and run tests; `notes` appends merge-specific verification scope |
-| `paihuo_release` | Return an idle engineer session to a normal session |
+| `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. Codex mode resumes the same session |
+| `paihuo_cancel` | Cancel a queued or running task (Codex tasks terminate the CLI process) |
+| `paihuo_integrate` | Dispatch an executor to merge a finished task's branch into the target branch, resolve conflicts and run tests; `notes` appends merge-specific verification scope; in Codex mode Codex performs the merge |
+| `paihuo_release` | Return an idle session engineer to a normal session; Codex engineers are removed from the plugin |
 | `paihuo_todo` | Maintain manager todos: `action: add/update/start/pause/resume/complete/remove/clear/list`; manager-only; a turn without a check is reminded |
 
 The manager preset also keeps `ask_user_question` with `mode: timed` / `timeout: 1`. The built-in `todo_write` is removed from that preset (it resets every turn and has no paused state), so `paihuo_todo` owns the list.
 
 Engineer: `paihuo_report` (`outcome: success | failed | blocked`, optionally `branch` / `commit`).
 
+Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugin records it and wakes the manager, and `paihuo_message` resumes the same session.
+
 ## Configuration
 
 | Field | Default | Meaning |
 |---|---|---|
-| `engineerModels` | `[]` | Selectable engineer models (`provider/model` + scope); empty = same model as the manager |
+| `engineerBackend` | `session` | Executor backend: `session` (session engineer) or `codex` (local Codex CLI) |
+| `codexCommand` | `codex` | Codex CLI command/absolute path |
+| `codexModel` | `null` | Codex model id; empty uses the Codex native default. The config page reads choices from `codex debug models` |
+| `codexReasoningEffort` | `null` | Codex reasoning effort (`model_reasoning_effort`); empty uses the model default. The config page lists levels supported by the selected model |
+| `codexSandbox` | `workspace-write` | Codex sandbox for the first run: `read-only` / `workspace-write` / `danger-full-access` |
+| `codexBypassApprovals` | `false` | Use `--dangerously-bypass-approvals-and-sandbox` |
+| `codexSkipGitRepoCheck` | `true` | Allow Codex outside a git repository |
+| `codexTranscriptOutput` | `true` | Record command output in the 🤖 menu (truncated; may be disabled) |
+| `engineerModels` | `[]` | Selectable engineer models (`provider/model` + scope); empty = same model as the manager; ignored in Codex mode |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | Concurrent engineer limit per project / overall |
 | `maxEngineerQueue` | `6` | Per-engineer queue limit; new tasks are rejected when full |
 | `worktree` | `true` | One git worktree and branch per engineer |
 | `serializedResources` | `['browser']` | Global resources held by one task at a time; add environment names such as `env127` so deploy/verify/seed tasks can serialize on that environment |
-| `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` |
+| `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` (not used in Codex mode) |
 | `managerSection` / `engineerSection` | `null` | Override the built-in prompt sections |
 
 You can also edit the profile's `cordis.patch.yml` directly:
@@ -122,19 +181,26 @@ Tasks carrying `resources: ["env127"]` serialize globally; main-workspace tasks 
 - Manager on `danger-full-access`: may dispatch to any **existing** project directory.
 - Manager on `workspace-write` / `read-only`: may only dispatch inside the manager's working directory.
 - A manager never dispatches to an engineer with higher permissions; the engineer is downgraded to the manager's preset if needed.
+- Codex mode is different: approvals and sandbox are controlled by `codexSandbox` / `codexBypassApprovals` and Codex native config, and the plugin does not downgrade them automatically. The manager's directory restriction still applies.
 
 ## Development and tests
 
 ```powershell
-npm test    # 58 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, projection, config, prompt/report, Remote manifest + simulated host integration + client assembly/syntax
+npm test    # 75 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, projection, config, prompt/report, Remote manifest + simulated host integration + Codex CLI/menu/model catalog + client assembly/syntax
 ```
 
-`test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, and permission path blocking.
+`test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, and a fake Codex CLI (exec, resume, failure, cancellation, worktree, model catalog).
 
 ## Known limitations
 
 - Manually archiving/deleting an engineer session fails its tasks and reports that to the manager.
 - If an engineer forgets `paihuo_report`, the last assistant reply is used and marked "no explicit report".
+- Codex mode calls the local CLI: Codex must be installed and logged in, and the version must support `codex exec resume`; dispatch reports a clear error when it is unavailable.
+- Codex `steer` is not true stdin injection: the plugin terminates the current CLI process and resumes the same session with the message; failure is reported if the session cannot be resumed.
+- Codex only returns its final answer. The 🤖 menu shows the tasks/replies/command summaries captured by this plugin, not internal reasoning, full stderr or untruncated output.
+- Codex's model, approvals and sandbox come from `codexModel` / `codexSandbox` / `codexBypassApprovals` and Codex native config; the plugin offers no per-task sandbox override (apart from `model` as a Codex model id) and no automatic permission downgrades.
+- Codex session files remain on disk; `paihuo_release` only removes the plugin record, not the native session file.
+- A Codex worktree task must commit its changes; tracked uncommitted changes at the end mark the task blocked so `paihuo_integrate` cannot merge an empty branch.
 - Worktrees only apply inside git repositories; a failed creation falls back to the main workspace with a warning and still respects the main-workspace lock.
 - The forced todo check relies on DSH's `agent/turn-stopping`; on older hosts it silently does nothing and the rest of the plugin keeps working.
 - The check runs after the reply: the first reply has already been sent, and the follow-up check adds a short message in the same turn. After two ignored reminders the turn is allowed to end and a warning is logged. The check guarantees the manager looks and can fix the list, not that the list is necessarily correct.

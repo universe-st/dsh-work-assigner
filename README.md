@@ -1,6 +1,6 @@
 # 派活（dsh-paihuo）
 
-给 DeepSeek Harness 增加「经理—工程师」模式：当前会话当**经理**，只负责沟通、拆解、派发与验收；真正干活的是插件自动创建的**工程师**会话。
+给 DeepSeek Harness 增加「经理—工程师」模式：当前会话当**经理**，只负责沟通、拆解、派发与验收；真正干活的是插件自动创建的**工程师**会话，或直接调用的本机 Codex CLI 子代理。
 
 **[English](README.en.md)** | 简体中文
 
@@ -9,6 +9,7 @@
 - **经理不动手**：预制预设只挂只读工具，插件再用工具守卫兜底；改文件、跑构建一律交给工程师。
 - **工程师并行**：受工位、单工程师排队、全局串行资源三层约束，前端测试不会互抢浏览器；同一项目的主工作区任务（合并、发布、改文档）自动互斥。
 - **独立 worktree**：每个工程师一个分支，改动隔离；验收后用 `paihuo_integrate` 合回基线分支并跑测试。
+- **Codex 子代理模式**：把执行者后端切换为 `codex` 后，插件直接调用本机 Codex CLI 执行任务；同一 Codex 会话可以复用、追加消息。经理会话右上角有 🤖 入口，可查看每个 Codex 子代理的会话内容。
 - **角色可见**：会话列表按角色着色（经理蓝底白字、工程师黄底黑字），回报在聊天里显示为「📋 派活回报」卡片。
 - **问题表**：经理提问默认 1 秒后转入右上角「问题表」，红圈数字是待回答的问题数；用户点开弹窗回答，经理继续处理该任务。
 - **待办事项**：经理用 `paihuo_todo` 添加/开始/暂停/恢复/修改/完成待办，入口与进度显示在会话右上角，跨轮次与刷新保留。
@@ -65,35 +66,93 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 
 工程师会话带 `👷` 前缀，收到一条自包含的任务消息（目标、目录、验收、测试要求），在权限范围内执行，结束时**必须**调用 `paihuo_report` 汇报结果。有独立 worktree 时，只在自己的 worktree 目录里操作，改动只提交到自己的分支。
 
+### Codex 子代理模式
+
+默认执行后端是会话工程师（`engineerBackend: "session"`）。把 Settings → 派活 → **执行者后端**切到「Codex CLI」，或直接配置 `engineerBackend: "codex"`，插件就会直接调用本机 `codex` 命令执行任务。
+
+**前置条件**
+
+- 本机安装并登录 Codex CLI：`codex --version` 可用，`codex exec resume --help` 能正常输出。
+- 默认命令是 `codex`；也可以用 `codexCommand` 指定绝对路径或包装器。
+- Codex 的审批与沙箱由本插件的 `codexSandbox` / `codexBypassApprovals` 和 Codex 原生配置决定，**不会**自动继承经理的权限预设。
+- 模型可以在配置页从 `codex debug models` 当前返回的列表里选择，也可以留空使用 Codex 原生默认；`codexModel` 用于固定。
+- 思考强度同样在配置页选择：列表来自所选模型的 `supported_reasoning_levels`，留空使用模型默认；`codexReasoningEffort` 用于固定。
+
+```yaml
+- id: paihuo
+  name: dsh-paihuo
+  config:
+    engineerBackend: codex
+    codexCommand: codex
+    codexModel: gpt-6.1-sol    # 可留空；配置页会从 codex debug models 读取
+    codexReasoningEffort: high # 可留空；配置页按模型支持的档位显示
+    codexSandbox: workspace-write
+    codexBypassApprovals: false
+```
+
+**行为**
+
+- 首轮执行 `codex exec --json`，保存返回的 `thread_id`；同一工程师再次派发或追加消息时用 `codex exec resume <thread_id>` 续接同一 Codex 会话。
+- 可以复用：`paihuo_dispatch` 传 `engineer` 或 `reuse: "auto"`；开发与测试仍然必须用不同工程师。
+- 运行中的任务可以用 `paihuo_message`：
+  - `queue`：当前 Codex 轮次结束后，在同一会话里追加一轮；
+  - `steer`：中断当前 CLI 进程，然后用同一会话续接这条消息（若会话无法恢复会报告失败）。
+- 空闲 Codex 工程师收到 `paihuo_message` 时直接续接一轮；回复以「【派活系统补充回复】」回到经理会话。
+- `paihuo_release` 可以把空闲 Codex 工程师移出插件；Codex 原生会话文件仍保留在磁盘。
+- 工位、排队、`priority: "urgent"`、串行资源、主工作区互斥、worktree 仍然生效。worktree 任务完成后 Codex 必须把改动提交到自己的分支，否则任务会报告阻塞。
+- `paihuo_integrate` 在 Codex 模式下也交给 Codex 工程师，在主工作区合并并跑测试。
+
+### 🤖 Codex 子代理菜单
+
+Codex 模式下，经理会话右上角会出现 🤖 入口：
+
+- 列出该经理名下所有 Codex 工程师：运行中/空闲、当前任务、模型、项目、worktree 分支、Codex session id。
+- 点选会话后显示任务/经理补充、Codex 回复、命令与截断输出、错误；回复按 Markdown 渲染。
+- 命令默认折叠，展开后看完整命令和输出；打开会话时从顶部开始，不截断首行。
+- 运行中的会话约每 0.5 秒更新；新回复会渐进呈现。视图停在底部时自动跟随，滚离底部后保持位置，并可用「↓」回到最新。
+- 只读展示，不提供发送消息或取消操作。
+- 数据来自插件捕获的 `codex exec --json` 事件，不包含 Codex 内部推理；命令输出可通过 `codexTranscriptOutput: false` 关闭。
+- 切换回会话模式后，如果还有旧 Codex 工程师记录，入口仍保留，便于查看；`paihuo_release` 后消失。
+
 ## 工具
 
 经理（仅经理会话可见）：
 
 | 工具 | 说明 |
 |---|---|
-| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名） |
-| `paihuo_engineers` | 名下工程师与状态 |
+| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）。Codex 模式下 `model` 是 Codex 模型 id |
+| `paihuo_engineers` | 名下执行者与状态；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
-| `paihuo_message` | 给工程师追加消息；`mode:"steer"` 立即插入当前轮 |
-| `paihuo_cancel` | 取消排队或运行中的任务 |
-| `paihuo_integrate` | 派工程师把已完成任务的分支合入目标分支，处理冲突并跑测试；`notes` 可写本次合并的额外核验/测试范围 |
-| `paihuo_release` | 把空闲的工程师会话恢复成普通会话 |
+| `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。Codex 模式下通过 resume 续接 |
+| `paihuo_cancel` | 取消排队或运行中的任务（Codex 任务会终止 CLI 进程） |
+| `paihuo_integrate` | 派执行者把已完成任务的分支合入目标分支，处理冲突并跑测试；`notes` 可写本次合并的额外核验/测试范围；Codex 模式下由 Codex 执行 |
+| `paihuo_release` | 把空闲的会话工程师恢复成普通会话；Codex 工程师会被移出插件 |
 | `paihuo_todo` | 维护经理待办：`action: add/update/start/pause/resume/complete/remove/clear/list`；只对经理可见；每轮未核对会被系统提醒 |
 
 经理预设还保留了 `ask_user_question`，并使用 `mode: timed` / `timeout: 1`；内置 `todo_write` 已从经理预设移除（每轮清空且没有暂停，改由 `paihuo_todo` 承担）。
 
 工程师：`paihuo_report`（`outcome: success | failed | blocked`，可附 `branch` / `commit`）。
 
+Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，插件负责写入台账并唤醒经理；追加消息通过 `codex exec resume` 续接。
+
 ## 配置
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
-| `engineerModels` | `[]` | 可选工程师模型（`provider/model` + 适用范围），空 = 与经理同模型 |
+| `engineerBackend` | `session` | 执行者后端：`session`（会话工程师）或 `codex`（本机 Codex CLI） |
+| `codexCommand` | `codex` | Codex CLI 命令/绝对路径 |
+| `codexModel` | `null` | Codex 模型 id；留空使用 Codex 原生默认。配置页从 `codex debug models` 读取可选列表 |
+| `codexReasoningEffort` | `null` | Codex 思考强度（`model_reasoning_effort`）；留空使用模型默认。配置页按所选模型支持的档位显示 |
+| `codexSandbox` | `workspace-write` | Codex 首轮沙箱：`read-only` / `workspace-write` / `danger-full-access` |
+| `codexBypassApprovals` | `false` | 使用 `--dangerously-bypass-approvals-and-sandbox` |
+| `codexSkipGitRepoCheck` | `true` | 非 git 目录也允许运行 Codex |
+| `codexTranscriptOutput` | `true` | 在 🤖 菜单里记录命令输出（截断；可关闭） |
+| `engineerModels` | `[]` | 可选工程师模型（`provider/model` + 适用范围），空 = 与经理同模型；Codex 模式下不生效 |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | 单项目 / 全局同时运行的工程师上限 |
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
 | `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务；可加入 `env127` 之类的共享环境名，发布/验证/造数任务带上同名 `resources` 即可互斥 |
-| `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设 |
+| `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设（Codex 模式不适用） |
 | `managerSection` / `engineerSection` | `null` | 覆盖内置提示词段 |
 
 也可以直接写 profile 的 `cordis.patch.yml`：
@@ -122,19 +181,26 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 - 经理为 `danger-full-access`：可派发到任何**存在**的项目目录。
 - 经理为 `workspace-write` / `read-only`：只能派发到经理工作目录之内。
 - 经理不能向权限更高的工程师派发；必要时自动把工程师降到经理的预设。
+- Codex 模式例外：Codex 的审批与沙箱由 `codexSandbox` / `codexBypassApprovals` 和 Codex 原生配置决定，插件不会自动降级；经理的目录限制仍然生效。
 
 ## 开发与测试
 
 ```powershell
-npm test    # 58 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + 客户端装配/语法
+npm test    # 75 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法
 ```
 
-`test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截等。
+`test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截，以及假的 Codex CLI（执行、resume、失败、取消、worktree、模型目录）。
 
 ## 已知限制
 
 - 工程师会话被手动归档/删除时，相关任务会失败并回报经理。
 - 工程师忘调 `paihuo_report` 时，用最后一条 assistant 回复兜底并标注「未显式报告」。
+- Codex 模式直接调用本机 CLI：需要已安装并登录 Codex，且版本支持 `codex exec resume`；CLI 不可用时派发会给出明确错误。
+- Codex 的 `steer` 不是真正的 stdin 中途注入：插件会终止当前 CLI 进程，再用同一会话续接消息；若会话无法恢复会报告失败。
+- Codex 只把最终回答交回父会话；🤖 菜单只展示插件捕获的任务/回复/命令摘要，不包含内部推理、完整 stderr 或未截断输出。
+- Codex 的模型、审批与沙箱由 `codexModel` / `codexSandbox` / `codexBypassApprovals` 和 Codex 原生配置决定；插件不提供按任务覆盖（`model` 传 Codex 模型 id 除外），也不做权限自动降级。
+- Codex 会话文件会保留在磁盘；`paihuo_release` 只移除插件记录，不删除原生会话文件。
+- Codex 在 worktree 里完成任务后必须提交改动；结束时仍有未提交的已跟踪改动会把任务标为阻塞，避免 `paihuo_integrate` 合入空分支。
 - worktree 只在 git 仓库生效；创建失败会退回主工作区并告警；退回时仍受主工作区互斥约束。
 - 待办强制核对依赖 DSH 的 `agent/turn-stopping`：旧 Host 没有该事件时不会提醒，其余功能正常。
 - 强制核对发生在回复之后：第一次回复已经发出，提醒后的核对会在同一轮追加一条简短回复；连续忽略提醒最多 2 次后放行并记录 warning。核对只保证经理看到并有机会修正，不保证内容一定正确。

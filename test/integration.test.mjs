@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { apply } from '../lib/index.js';
-import { createWorld, PROJECT, settle } from './harness.mjs';
+import { listCodexModels } from '../lib/codex.js';
+import { createWorld, FAKE_CODEX, PROJECT, settle } from './harness.mjs';
 
 /**
  * 仓库目录之外的另一个真实目录，平台无关：POSIX 下是 /var/folders/…，
@@ -58,6 +62,43 @@ function todoReminders(world, manager) {
   return world.prompts.filter((entry) => (
     entry.sessionId === manager.id && entry.text.includes('派活系统提醒')
   ));
+}
+
+function beginCodexLog() {
+  const directory = mkdtempSync(join(tmpdir(), 'paihuo-codex-log-'));
+  const path = join(directory, 'runs.jsonl');
+  process.env.PAIHUO_FAKE_CODEX_LOG = path;
+  return {
+    path,
+    cleanup() {
+      delete process.env.PAIHUO_FAKE_CODEX_LOG;
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+function readCodexRuns(path) {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((entry) => entry?.kind === 'run');
+}
+
+async function waitFor(predicate, timeoutMs = 5000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) return;
+    await settle(25);
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`);
 }
 
 test('manager mode delegates, engineer reports, manager is woken', async () => {
@@ -465,4 +506,291 @@ test('todo guard nudges at most twice per turn', async () => {
   await fireTurnStopping(world, manager, 1);
   await fireTurnStopping(world, manager, 1);
   assert.equal(todoReminders(world, manager).length, 2);
+});
+
+test('codex mode dispatches a CLI engineer and wakes the manager', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({
+      config: { engineerBackend: 'codex', worktree: false, codexReasoningEffort: 'high' },
+    });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+    const sessionsBefore = world.sessions.size;
+
+    const result = await runDispatch(world, manager, {
+      title: 'Codex 任务',
+      brief: '修改 README，并在最终回答里说明结果。PAIHUO_FAKE_DELAY_MS=200',
+    });
+    assert.equal(result.status, 'running', JSON.stringify(result));
+    assert.equal(result.backend, 'codex');
+    assert.equal(result.engineer, 'codex-t1');
+    assert.equal(world.sessions.size, sessionsBefore, 'codex mode must not create an engineer session');
+    assert.ok(!world.agents.has(result.engineer), 'codex engineer is not a DSH agent');
+
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const run = readCodexRuns(log.path)[0];
+    assert.equal(run.resume, false);
+    assert.equal(run.cwd, PROJECT);
+    assert.match(run.prompt, /派活任务 #t1/);
+    assert.doesNotMatch(run.prompt, /paihuo_report/);
+    assert.ok(run.args.includes('--color'));
+    assert.ok(run.args.includes('--sandbox'));
+    assert.ok(run.args.includes('model_reasoning_effort=high'));
+
+    const engineers = await runTool(world, manager, 'paihuo_engineers', {});
+    assert.ok(engineers.engineers.some((entry) => entry.backend === 'codex' && entry.codex_session === null));
+
+    await waitFor(() => world.stored.tasks.t1?.status === 'done');
+    const engineer = world.stored.engineers['codex-t1'];
+    assert.ok(engineer, 'codex engineer record should remain for reuse');
+    assert.equal(engineer.status, 'idle');
+    assert.equal(engineer.codexSessionId, 'fake-thread-1');
+    const report = world.prompts.find(
+      (entry) => entry.sessionId === manager.id && entry.text.includes('【派活系统回报'),
+    );
+    assert.ok(report, 'manager must receive the codex completion report');
+    assert.match(report.text, /Codex 工程师/);
+    assert.match(report.text, /FAKE_CODEX_OK/);
+    assert.doesNotMatch(report.text, /未显式调用报告工具/);
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('codex engineers can be reused and messaged', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({
+      config: { engineerBackend: 'codex', worktree: false, codexReasoningEffort: 'high' },
+    });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const first = await runDispatch(world, manager, {
+      title: '任务 A',
+      brief: '执行 A。PAIHUO_FAKE_DELAY_MS=50',
+    });
+    await waitFor(() => world.stored.tasks[first.task_id]?.status === 'done');
+
+    const second = await runDispatch(world, manager, {
+      title: '任务 B',
+      brief: '在同一条工作线上执行 B。PAIHUO_FAKE_DELAY_MS=50',
+      engineer: first.engineer,
+    });
+    assert.equal(second.status, 'running');
+    await waitFor(() => world.stored.tasks[second.task_id]?.status === 'done');
+    let runs = readCodexRuns(log.path);
+    assert.equal(runs.length, 2);
+    assert.equal(runs[1].resume, true);
+    assert.equal(runs[1].sessionId, 'fake-thread-1');
+    assert.match(runs[1].prompt, /派活任务 #t2/);
+    assert.ok(!runs[1].args.includes('--color'), 'resume does not accept --color');
+    assert.ok(!runs[1].args.includes('--sandbox'), 'resume reuses the session sandbox');
+    assert.ok(runs[1].args.includes('model_reasoning_effort=high'));
+
+    const sent = await runTool(world, manager, 'paihuo_message', {
+      engineer: first.engineer,
+      message: '再补充一句。PAIHUO_FAKE_DELAY_MS=50',
+    });
+    assert.equal(sent.engineer, first.engineer);
+    await waitFor(() => world.prompts.some((entry) => entry.text.includes('【派活系统补充回复')));
+    runs = readCodexRuns(log.path);
+    assert.equal(runs.length, 3);
+    assert.equal(runs[2].resume, true);
+    assert.match(runs[2].prompt, /经理补充/);
+
+    const released = await runTool(world, manager, 'paihuo_release', { engineer: first.engineer });
+    assert.match(released.text, /已从插件中移除/);
+    assert.equal(world.stored.engineers[first.engineer], undefined);
+    await assert.rejects(
+      () => runTool(world, manager, 'paihuo_message', { engineer: first.engineer, message: '再来' }),
+      /未知工程师会话/,
+    );
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('running codex tasks accept queued manager messages', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, {
+      title: '追加任务',
+      brief: '执行任务。PAIHUO_FAKE_DELAY_MS=250',
+    });
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const sent = await runTool(world, manager, 'paihuo_message', {
+      engineer: result.engineer,
+      message: '补充要求：只改 README。',
+      mode: 'queue',
+    });
+    assert.equal(sent.mode, 'queue');
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'done', 8000);
+    const runs = readCodexRuns(log.path);
+    assert.equal(runs.length, 2);
+    assert.equal(runs[1].resume, true);
+    assert.match(runs[1].prompt, /补充要求：只改 README/);
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('codex model catalog is read from codex debug models', () => {
+  const runtime = {
+    config: {
+      codexCommand: process.execPath,
+      codexCommandArgs: [FAKE_CODEX],
+    },
+    logger: { warn() {} },
+  };
+  const result = listCodexModels(runtime, true);
+  assert.equal(result.error, null);
+  assert.deepEqual(result.models.map((model) => model.id), ['gpt-test-codex']);
+  assert.equal(result.models[0].name, 'GPT Test Codex');
+  assert.deepEqual(result.models[0].reasoningLevels.map((level) => level.effort), ['low', 'medium', 'high']);
+  assert.equal(result.models[0].defaultReasoningLevel, 'medium');
+});
+
+test('codex mode fails cleanly when the CLI is missing', async () => {
+  const world = createWorld({ codex: false, config: { engineerBackend: 'codex' } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  await assert.rejects(
+    () => runDispatch(world, manager, { title: '任务', brief: '执行。' }),
+    /Codex CLI|无法执行/,
+  );
+  assert.equal(Object.keys(world.stored.tasks).length, 0);
+});
+
+test('failed codex runs become failed tasks with diagnostics', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, {
+      title: '失败任务',
+      brief: '执行。PAIHUO_FAKE_FAIL',
+    });
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'failed');
+    const report = world.prompts.find(
+      (entry) => entry.sessionId === manager.id && entry.text.includes('【派活系统回报'),
+    );
+    assert.ok(report);
+    assert.match(report.text, /fake codex failure/);
+    assert.equal(world.stored.engineers[result.engineer].status, 'idle');
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('cancelling a codex task kills the CLI process and keeps it cancelled', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, {
+      title: '取消任务',
+      brief: '执行。PAIHUO_FAKE_HANG',
+    });
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const cancelled = await runTool(world, manager, 'paihuo_cancel', { task_id: result.task_id });
+    assert.equal(cancelled.task_id, result.task_id);
+    assert.equal(world.stored.tasks[result.task_id].status, 'cancelled');
+    assert.equal(world.stored.engineers[result.engineer].status, 'idle');
+    await settle(300);
+    assert.equal(world.stored.tasks[result.task_id].status, 'cancelled');
+    assert.ok(!world.prompts.some((entry) => entry.text.includes('【派活系统回报')));
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('codex mode runs in an isolated git worktree and reports its branch', async () => {
+  const log = beginCodexLog();
+  const root = mkdtempSync(join(tmpdir(), 'paihuo-codex-'));
+  const repo = join(root, 'repo');
+  const git = (args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  try {
+    mkdirSync(repo);
+    git(['init']);
+    git(['config', 'user.email', 'paihuo@example.com']);
+    git(['config', 'user.name', 'Paihuo Test']);
+    git(['config', 'core.autocrlf', 'false']);
+    writeFileSync(join(repo, 'README.md'), 'hello\n');
+    git(['add', '-A']);
+    git(['commit', '-m', 'init']);
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+
+    const world = createWorld({ cwd: repo, config: { engineerBackend: 'codex', worktree: true } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+    const result = await runDispatch(world, manager, {
+      title: 'worktree 任务',
+      brief: '检查 worktree。PAIHUO_FAKE_DELAY_MS=100',
+      base_branch: branch,
+    });
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const run = readCodexRuns(log.path)[0];
+    assert.match(run.cwd.replaceAll('\\', '/'), /\.paihuo-worktrees\//);
+    assert.equal(existsSync(run.cwd), true);
+    assert.ok(world.stored.tasks[result.task_id].worktree);
+    assert.match(world.stored.tasks[result.task_id].worktree.branch, /^paihuo\/t1/);
+
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'done', 8000);
+    assert.match(world.stored.tasks[result.task_id].report.branch, /^paihuo\/t1/);
+  } finally {
+    log.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('codex mode uses a codex CLI engineer for integration merges', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, { title: '来源任务', brief: '执行来源任务。' });
+    const engineer = world.agents.get(result.engineer);
+    world.append(engineer.session, 'turn/start', { turn: 1 });
+    await runTool(world, engineer, 'paihuo_report', {
+      task_id: result.task_id,
+      outcome: 'success',
+      summary: '完成',
+      branch: 'paihuo/fake',
+    });
+    world.append(engineer.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+    await settle(80);
+    assert.equal(world.stored.tasks[result.task_id].status, 'done');
+
+    // 运行中切换后端：新派发的合并任务应使用 Codex CLI。
+    world.config.engineerBackend = 'codex';
+    world.emit('loader/volatile-update');
+    await settle(20);
+
+    const integrated = await runTool(world, manager, 'paihuo_integrate', {
+      task_id: result.task_id,
+      target_branch: 'main',
+    });
+    assert.equal(integrated.status, 'running');
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const prompt = readCodexRuns(log.path)[0].prompt;
+    assert.match(prompt, /git merge --no-ff paihuo\/fake/);
+    assert.match(prompt, /最终回答/);
+    assert.doesNotMatch(prompt, /paihuo_report/);
+    await waitFor(() => world.stored.tasks[integrated.task_id]?.status === 'done', 8000);
+  } finally {
+    log.cleanup();
+  }
 });

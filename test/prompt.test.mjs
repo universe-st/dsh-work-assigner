@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildManagerSection, buildReportMessage, buildTodoCheckReminder } from '../lib/prompt.js';
+import { buildCodexTaskPrompt, buildManagerSection, buildReportMessage, buildTodoCheckReminder } from '../lib/prompt.js';
 
 function fakeRuntime() {
   return {
@@ -126,6 +126,46 @@ test('integration report says the branch is already merged', () => {
   assert.match(text, /已合入/);
   assert.doesNotMatch(text, /验收后用/);
   assert.doesNotMatch(text, /目标分支：master（验收后/);
+});
+
+test('codex task prompt asks for a final answer instead of paihuo_report', () => {
+  const task = {
+    taskId: 't11',
+    title: 'Codex 任务',
+    projectPath: 'D:\\Workspace\\proj',
+    baseBranch: 'main',
+    brief: '改 README。',
+  };
+  const engineer = {
+    sessionId: 'codex-run-1',
+    worktree: { path: 'D:\\Workspace\\.paihuo-worktrees\\proj-t11', branch: 'paihuo/t11', baseCommit: 'abc' },
+  };
+  const text = buildCodexTaskPrompt(task, engineer);
+  assert.match(text, /派活任务 #t11/);
+  assert.match(text, /最终回答/);
+  assert.match(text, /git add -A && git commit/);
+  assert.doesNotMatch(text, /必须调用 `paihuo_report`/);
+  assert.doesNotMatch(text, /paihuo_report/);
+});
+
+test('codex report keeps the client card contract and skips unreported wording', () => {
+  const task = {
+    taskId: 't12',
+    title: 'Codex 任务',
+    status: 'done',
+    backend: 'codex',
+    engineerId: 'codex-t12',
+    codexSessionId: 'fake-thread-1',
+    projectPath: 'D:\\Workspace\\proj',
+    baseBranch: 'main',
+    worktree: { path: 'D:\\Workspace\\.paihuo-worktrees\\proj-t12', branch: 'paihuo/t12' },
+    report: { outcome: 'success', summary: '完成。', branch: 'paihuo/t12' },
+  };
+  const text = buildReportMessage(task, undefined);
+  assert.match(text, /- 工程师：Codex 工程师 codex-t12/);
+  assert.match(text, /- 后端：Codex 工程师（CLI）/);
+  assert.doesNotMatch(text, /未显式调用报告工具/);
+  assert.match(text, /paihuo_integrate/);
 });
 
 test('todo check reminder tells the manager to list and reconcile', () => {

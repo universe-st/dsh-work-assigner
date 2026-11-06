@@ -2,7 +2,7 @@
   "name": "dsh-paihuo",
   "version": "0.1.0",
   "private": true,
-  "description": "派活：把任务派给工程师会话执行的经理模式（经理不阻塞、工程师并行、工位与排队受限）",
+  "description": "派活：把任务派给会话工程师或本机 Codex CLI 子代理执行的经理模式（经理不阻塞、工程师并行、工位与排队受限）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -54,7 +54,8 @@
     "dispatch",
     "manager",
     "engineer",
-    "subagent"
+    "subagent",
+    "codex"
   ],
   "dependencies": {
     "@deepseek-ai/cosmokit": "~1.8.6",

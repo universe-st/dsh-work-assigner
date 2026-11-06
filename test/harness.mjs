@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PROJECT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const FAKE_CODEX = resolve(PROJECT, 'test', 'fake-codex.mjs');
 
 function messageText(content) {
   return (content ?? [])
@@ -16,8 +17,17 @@ function messageText(content) {
 }
 
 export function createWorld(options = {}) {
+  const config = { ...(options.config ?? {}) };
+  if (config.codexCommand === undefined) {
+    if (options.codex === false) {
+      config.codexCommand = 'paihuo-missing-codex-command';
+    } else {
+      config.codexCommand = process.execPath;
+      config.codexCommandArgs = [FAKE_CODEX];
+    }
+  }
   const world = {
-    config: options.config ?? {},
+    config,
     cwd: options.cwd ?? PROJECT,
     managerSandbox: options.managerSandbox ?? 'danger-full-access',
     managerPreset: options.managerPreset ?? 'danger-full-access',
@@ -340,6 +350,19 @@ export function createWorld(options = {}) {
   services.storageDomain = {
     async open(spec) {
       world.stored = spec.global.initial;
+      const tables = new Map();
+      const table = (name) => {
+        if (!tables.has(name)) tables.set(name, new Map());
+        const records = tables.get(name);
+        return {
+          get: (key) => records.get(key),
+          entries: () => [...records.entries()][Symbol.iterator](),
+          put: async (key, value) => {
+            records.set(key, value);
+          },
+          delete: async (key) => records.delete(key),
+        };
+      };
       return {
         global: {
           get: () => world.stored,
@@ -347,6 +370,7 @@ export function createWorld(options = {}) {
             world.stored = value;
           },
         },
+        table,
         async close() {},
       };
     },
@@ -394,4 +418,4 @@ export function settle(ms = 12) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export { PROJECT };
+export { FAKE_CODEX, PROJECT };

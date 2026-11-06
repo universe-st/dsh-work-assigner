@@ -3,6 +3,7 @@ import { resolve, sep } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  backendOf,
   canDispatchTo,
   canStartTask,
   canSupervise,
@@ -26,6 +27,14 @@ const child = resolve(root, 'packages', 'app');
 const sibling = resolve(sep, 'work', 'other');
 const lookalike = resolve(sep, 'work', 'demo2');
 const elsewhere = resolve(sep, 'elsewhere');
+
+test('backendOf defaults legacy records to session', () => {
+  assert.equal(backendOf(undefined), 'session');
+  assert.equal(backendOf({}), 'session');
+  assert.equal(backendOf({ backend: 'session' }), 'session');
+  assert.equal(backendOf({ backend: 'codex' }), 'codex');
+  assert.equal(backendOf({ backend: 'nope' }), 'session');
+});
 
 test('sandboxRank orders confinement levels', () => {
   assert.ok(sandboxRank('read-only') < sandboxRank('workspace-write'));

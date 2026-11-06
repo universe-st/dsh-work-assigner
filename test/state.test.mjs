@@ -66,6 +66,34 @@ test('a malformed todo list does not discard the task ledger', () => {
   assert.equal(hydrated.state.tasks.t1.status, 'done');
 });
 
+test('codex task and engineer fields hydrate', () => {
+  const state = createEmptyState();
+  state.tasks.t1 = task({
+    taskId: 't1',
+    backend: 'codex',
+    codexSessionId: 'fake-thread-1',
+    status: 'done',
+    worktree: { path: 'C:\\work\\.paihuo-worktrees\\demo-t1', branch: 'paihuo/t1' },
+  });
+  state.engineers.e1 = {
+    sessionId: 'fake-thread-1',
+    managerId: 'm1',
+    projectPath: 'C:\\work\\demo',
+    projectKey: 'c:\\work\\demo',
+    backend: 'codex',
+    model: null,
+    worktree: { path: 'C:\\work\\.paihuo-worktrees\\demo-t1', branch: 'paihuo/t1' },
+    status: 'idle',
+    queue: [],
+    createdAt: 1,
+  };
+  const hydrated = hydrateState(state);
+  assert.equal(hydrated.recovered, false);
+  assert.equal(hydrated.state.tasks.t1.backend, 'codex');
+  assert.equal(hydrated.state.tasks.t1.codexSessionId, 'fake-thread-1');
+  assert.equal(hydrated.state.engineers.e1.backend, 'codex');
+});
+
 test('task ids are monotonic', () => {
   const state = createEmptyState();
   assert.equal(nextTaskId(state), 't1');
