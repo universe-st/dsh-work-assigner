@@ -794,3 +794,147 @@ test('codex mode uses a codex CLI engineer for integration merges', async () => 
     log.cleanup();
   }
 });
+
+test('idle session engineers report back after a manager follow-up', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const dispatched = await runDispatch(world, manager, { title: '任务 A', brief: '执行任务 A。' });
+  const engineer = world.agents.get(dispatched.engineer);
+  world.append(engineer.session, 'turn/start', { turn: 1 });
+  world.append(engineer.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  await settle(80);
+  assert.equal(world.stored.tasks[dispatched.task_id].status, 'done');
+  assert.equal(world.stored.engineers[dispatched.engineer].activeTaskId, undefined);
+
+  // 任务结束后经理追加一条消息：这一轮没有任务号，工程师无法调用 paihuo_report，
+  // 插件必须在回合结束时把回复送回经理，否则经理会一直以为对方还在干活。
+  const sent = await runTool(world, manager, 'paihuo_message', {
+    engineer: dispatched.engineer,
+    message: '坐下动画不生效，请复现并修掉。',
+  });
+  assert.match(sent.text, /已用 queue 方式/);
+  assert.ok(world.stored.engineers[dispatched.engineer].supplement, 'supplement must be tracked');
+
+  engineer.session.deriveMessages = () => [
+    { role: 'assistant', content: [{ type: 'text', text: '已定位：走位 tween 结束前进入 sit，行走帧把坐姿覆盖了；已修。' }] },
+  ];
+  world.append(engineer.session, 'turn/start', { turn: 2 });
+  world.append(engineer.session, 'user/message', {
+    content: [{ type: 'text', text: '【经理补充】\n坐下动画不生效，请复现并修掉。' }],
+    source: { kind: 'user', rpcId: 'rpc-supplement' },
+    role: 'user',
+  });
+  await settle(20);
+  world.append(engineer.session, 'turn/end', { turn: 2, reason: { kind: 'completed' } });
+  await settle(100);
+
+  const reply = world.prompts.find(
+    (entry) => entry.sessionId === manager.id && entry.text.includes('【派活系统补充回复'),
+  );
+  assert.ok(reply, 'manager must receive the supplement reply');
+  assert.match(reply.text, /行走帧把坐姿覆盖/);
+  assert.equal(world.stored.engineers[dispatched.engineer].supplement, undefined);
+});
+
+test('a supplement queued behind a task still reports back', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const dispatched = await runDispatch(world, manager, { title: '任务 A', brief: '执行任务 A。' });
+  const engineer = world.agents.get(dispatched.engineer);
+  world.append(engineer.session, 'turn/start', { turn: 1 });
+
+  // 任务还在跑时经理追加一条消息：它排在任务之后，会另起一轮。
+  const sent = await runTool(world, manager, 'paihuo_message', {
+    engineer: dispatched.engineer,
+    message: '合并前先把单测补齐。',
+    mode: 'queue',
+  });
+  assert.match(sent.text, /已用 queue 方式/);
+
+  world.append(engineer.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  await settle(80);
+  assert.equal(world.stored.tasks[dispatched.task_id].status, 'done');
+
+  // activeTaskId 可能在补充轮开始时还没清掉：必须按回合号判断，而不是按它。
+  engineer.session.deriveMessages = () => [
+    { role: 'assistant', content: [{ type: 'text', text: '单测已补齐，任务 A 的改动可以合并。' }] },
+  ];
+  world.append(engineer.session, 'turn/start', { turn: 2 });
+  world.append(engineer.session, 'user/message', {
+    content: [{ type: 'text', text: '【经理补充】\n合并前先把单测补齐。' }],
+    source: { kind: 'user', rpcId: 'rpc-queued-supplement' },
+    role: 'user',
+  });
+  await settle(20);
+  world.append(engineer.session, 'turn/end', { turn: 2, reason: { kind: 'completed' } });
+  await settle(100);
+
+  const reply = world.prompts.find(
+    (entry) => entry.sessionId === manager.id && entry.text.includes('单测已补齐'),
+  );
+  assert.ok(reply, 'the queued follow-up must report back too');
+  assert.match(reply.text, /【派活系统补充回复/);
+});
+
+test('manager reactions to engineer reports are relayed to the bound IM chat', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const relayed = [];
+  const originalGet = world.ctx.get;
+  world.ctx.get = (name) => (name === 'dshIm'
+    ? {
+      async describeConversation(sessionId) {
+        return { channel: 'qq', botId: 'bot_1', conversationKey: `c2c:${sessionId === manager.id ? 'OPENID' : 'OTHER'}` };
+      },
+      async send(botId, target, text, options) {
+        relayed.push({ botId, target, text, options });
+        return { sent: true };
+      },
+    }
+    : originalGet.call(world.ctx, name));
+
+  world.append(manager.session, 'turn/start', { turn: 4 });
+  world.append(manager.session, 'user/message', {
+    content: [{ type: 'text', text: '【派活系统回报｜不是用户消息】\n任务 #t1「任务 A」已完成。' }],
+    source: { kind: 'user', rpcId: 'rpc-report' },
+    role: 'user',
+  });
+  // 中间的工具调用与最终回复：只有这一轮最后一个助手文本会被补发。
+  world.append(manager.session, 'assistant/message', {
+    turn: 4,
+    step: 1,
+    message: { role: 'assistant', content: [{ type: 'text', text: '我先看一下报告。' }] },
+  });
+  world.append(manager.session, 'tool/call', { turn: 4, step: 2, name: 'paihuo_todo', callId: 'call-todo' });
+  world.append(manager.session, 'assistant/message', {
+    turn: 4,
+    step: 3,
+    message: { role: 'assistant', content: [{ type: 'text', text: '已合并 main，`4f99693`，接下来录屏。' }] },
+  });
+  world.append(manager.session, 'turn/end', { turn: 4, reason: { kind: 'completed' } });
+  await settle(100);
+
+  assert.equal(relayed.length, 1, 'the report-driven turn must be relayed once');
+  assert.equal(relayed[0].botId, 'bot_1');
+  assert.deepEqual(relayed[0].target, { kind: 'user', route: { userOpenId: 'OPENID' } });
+  assert.match(relayed[0].text, /【派活 · 经理】/);
+  assert.match(relayed[0].text, /接下来录屏/);
+  assert.doesNotMatch(relayed[0].text, /我先看一下报告/);
+
+  // 别的插件（记忆整理等）注入的回合不补发，避免把内部工作刷到聊天里。
+  world.append(manager.session, 'turn/start', { turn: 5 });
+  world.append(manager.session, 'user/message', {
+    content: [{ type: 'text', text: '[meow-memory-dream] 记忆整理任务' }],
+    source: { kind: 'plugin:meow-memory' },
+    role: 'user',
+  });
+  world.append(manager.session, 'turn/end', { turn: 5, reason: { kind: 'completed' } });
+  await settle(80);
+  assert.equal(relayed.length, 1);
+});

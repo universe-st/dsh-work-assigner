@@ -66,6 +66,8 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 
 工程师会话带 `👷` 前缀，收到一条自包含的任务消息（目标、目录、验收、测试要求），在权限范围内执行，结束时**必须**调用 `paihuo_report` 汇报结果。有独立 worktree 时，只在自己的 worktree 目录里操作，改动只提交到自己的分支。
 
+空闲工程师（上一个任务已经结束）收到 `paihuo_message` 时没有任务号，调不了 `paihuo_report`；插件会在这一轮结束时把最后一条回复以「【派活系统补充回复】」回报给经理，不会出现“经理一直在等、工程师其实早就干完了”。
+
 ### Codex 子代理模式
 
 默认执行后端是会话工程师（`engineerBackend: "session"`）。把 Settings → 派活 → **执行者后端**切到「Codex CLI」，或直接配置 `engineerBackend: "codex"`，插件就会直接调用本机 `codex` 命令执行任务。
@@ -102,6 +104,17 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 - 工位、排队、`priority: "urgent"`、串行资源、主工作区互斥、worktree 仍然生效。worktree 任务完成后 Codex 必须把改动提交到自己的分支，否则任务会报告阻塞。
 - `paihuo_integrate` 在 Codex 模式下也交给 Codex 工程师，在主工作区合并并跑测试。
 
+### 和 IM 一起用
+
+经理会话可以绑到 IM 私聊（QQ / 飞书 / 微信…）。IM 插件只回传「从聊天里发起的那一轮」，而工程师汇报、补充回复是派活插件注入的消息；不处理的话，你在 QQ 里只能看到自己说的话，看不到经理的反应。
+
+派活会把这类回合的最终回复补发到该会话绑定的聊天：
+
+- 触发范围：由「【派活系统回报】」或「【派活系统补充回复】」引起的回合；记忆整理（dream）、定时任务等其它注入回合不会补发，避免把内部工作刷进聊天。
+- 发送内容：经理这一轮的最终回复，前面加 `【派活 · 经理】` 标记，按 Markdown 发送。
+- 依赖 dsh-im ≥ 5.9（提供 `describeConversation`）且该会话已经绑定 IM 聊天；不满足时静默跳过（`imRelay: false` 可显式关闭），其它功能不受影响。
+- 如果同时打开 dsh-im 自己的「投递模型回答」，同一轮回复可能收到两条；两个开关选一个即可。
+
 ### 🤖 Codex 子代理菜单
 
 Codex 模式下，经理会话右上角会出现 🤖 入口：
@@ -123,7 +136,7 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 | `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）。Codex 模式下 `model` 是 Codex 模型 id |
 | `paihuo_engineers` | 名下执行者与状态；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
-| `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。Codex 模式下通过 resume 续接 |
+| `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。空闲工程师的补充轮结束后会自动回报；Codex 模式下通过 resume 续接 |
 | `paihuo_cancel` | 取消排队或运行中的任务（Codex 任务会终止 CLI 进程） |
 | `paihuo_integrate` | 派执行者把已完成任务的分支合入目标分支，处理冲突并跑测试；`notes` 可写本次合并的额外核验/测试范围；Codex 模式下由 Codex 执行 |
 | `paihuo_release` | 把空闲的会话工程师恢复成普通会话；Codex 工程师会被移出插件 |
@@ -153,6 +166,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
 | `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务；可加入 `env127` 之类的共享环境名，发布/验证/造数任务带上同名 `resources` 即可互斥 |
 | `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设（Codex 模式不适用） |
+| `imRelay` | `true` | 把经理对工程师汇报的反应补发到该会话绑定的 IM 聊天（需要 dsh-im ≥ 5.9） |
 | `managerSection` / `engineerSection` | `null` | 覆盖内置提示词段 |
 
 也可以直接写 profile 的 `cordis.patch.yml`：
@@ -186,7 +200,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 ## 开发与测试
 
 ```powershell
-npm test    # 75 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法
+npm test    # 81 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法
 ```
 
 `test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截，以及假的 Codex CLI（执行、resume、失败、取消、worktree、模型目录）。
@@ -195,6 +209,7 @@ npm test    # 75 个用例：纯策略、状态、待办状态机与强制核对
 
 - 工程师会话被手动归档/删除时，相关任务会失败并回报经理。
 - 工程师忘调 `paihuo_report` 时，用最后一条 assistant 回复兜底并标注「未显式报告」。
+- 空闲工程师的补充轮如果恰好在插件重载期间结束，回复拿不到：对账时会清掉记录并回报一条「未能读取最终回复」，需要你到工程师会话里确认。
 - Codex 模式直接调用本机 CLI：需要已安装并登录 Codex，且版本支持 `codex exec resume`；CLI 不可用时派发会给出明确错误。
 - Codex 的 `steer` 不是真正的 stdin 中途注入：插件会终止当前 CLI 进程，再用同一会话续接消息；若会话无法恢复会报告失败。
 - Codex 只把最终回答交回父会话；🤖 菜单只展示插件捕获的任务/回复/命令摘要，不包含内部推理、完整 stderr 或未截断输出。

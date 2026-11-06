@@ -66,6 +66,8 @@ Do **not** chat inside engineer sessions — they are the work site; open one on
 
 Engineer sessions carry a `👷` prefix and receive one self-contained task message (goal, directory, acceptance, tests). They execute within their permissions and **must** call `paihuo_report` at the end. With a worktree, they stay inside their own directory and commit only to their own branch.
 
+An idle engineer (its last task already finished) has no task id, so it cannot call `paihuo_report` for a `paihuo_message` follow-up. The plugin reports the engineer's last reply back to the manager as a “【Paihuo supplement】” message when that turn ends, so the manager never waits on work that already finished.
+
 ### Codex subagent mode
 
 The default executor backend is a session engineer (`engineerBackend: "session"`). Switch Settings → Paihuo → **Executor backend** to “Codex CLI”, or set `engineerBackend: "codex"`, and the plugin invokes the local `codex` command directly.
@@ -102,6 +104,17 @@ The default executor backend is a session engineer (`engineerBackend: "session"`
 - Workstations, queues, `priority: "urgent"`, serialized resources, the main-workspace lock and worktrees still apply. In a worktree task, Codex must commit its changes to its branch; otherwise the task is reported as blocked.
 - `paihuo_integrate` also uses a Codex engineer in this mode, merging in the main workspace and running tests.
 
+### Using it with IM
+
+A manager session can be bound to an IM private chat (QQ / Feishu / WeChat…). The IM plugin only echoes back the turn that started in that chat, while engineer reports and supplements are messages injected by this plugin. Without extra handling you would only see your own messages in QQ, never the manager's reaction.
+
+Paihuo relays the final reply of those turns to the chat bound to the session:
+
+- Scope: turns started by “【Paihuo report】” or “【Paihuo supplement】”; memory-dream and scheduled turns are not relayed, so internal work never leaks into the chat.
+- Content: the manager's final reply for that turn, prefixed with `【派活 · 经理】` and sent as Markdown.
+- Requires dsh-im ≥ 5.9 (which provides `describeConversation`) and a session already bound to an IM chat. Otherwise it skips silently (`imRelay: false` turns it off explicitly) and everything else keeps working.
+- If dsh-im's own "deliver model answers" switch is also on, one turn may arrive twice; keep only one of the two switches.
+
 ### 🤖 Codex subagent menu
 
 In Codex mode, the manager header gains a 🤖 entry:
@@ -123,7 +136,7 @@ Manager (visible only in manager sessions):
 | `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name). In Codex mode `model` is a Codex model id |
 | `paihuo_engineers` | Executors under this manager and their state; Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
-| `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. Codex mode resumes the same session |
+| `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. An idle engineer's supplementary turn reports back automatically; Codex mode resumes the same session |
 | `paihuo_cancel` | Cancel a queued or running task (Codex tasks terminate the CLI process) |
 | `paihuo_integrate` | Dispatch an executor to merge a finished task's branch into the target branch, resolve conflicts and run tests; `notes` appends merge-specific verification scope; in Codex mode Codex performs the merge |
 | `paihuo_release` | Return an idle session engineer to a normal session; Codex engineers are removed from the plugin |
@@ -153,6 +166,7 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugi
 | `worktree` | `true` | One git worktree and branch per engineer |
 | `serializedResources` | `['browser']` | Global resources held by one task at a time; add environment names such as `env127` so deploy/verify/seed tasks can serialize on that environment |
 | `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` (not used in Codex mode) |
+| `imRelay` | `true` | Relay the manager's reaction to engineer reports into the IM chat bound to that session (requires dsh-im ≥ 5.9) |
 | `managerSection` / `engineerSection` | `null` | Override the built-in prompt sections |
 
 You can also edit the profile's `cordis.patch.yml` directly:
@@ -186,7 +200,7 @@ Tasks carrying `resources: ["env127"]` serialize globally; main-workspace tasks 
 ## Development and tests
 
 ```powershell
-npm test    # 75 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, projection, config, prompt/report, Remote manifest + simulated host integration + Codex CLI/menu/model catalog + client assembly/syntax
+npm test    # 81 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, Remote manifest + simulated host integration + Codex CLI/menu/model catalog + client assembly/syntax
 ```
 
 `test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, and a fake Codex CLI (exec, resume, failure, cancellation, worktree, model catalog).
