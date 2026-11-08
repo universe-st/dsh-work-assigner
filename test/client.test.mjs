@@ -17,3 +17,12 @@ test('client registers both manager header utilities', () => {
   assert.match(source, /question\.badgeAria/);
   assert.match(source, /todo\.badgeAria/);
 });
+
+test('manager tool allowlist dialog is wired into the settings page', () => {
+  assert.match(source, /function ToolAccessDialog/);
+  assert.match(source, /createToolsApi/);
+  assert.match(source, /'config\.section\.tools'/);
+  assert.match(source, /'tools\.group\.other'/);
+  assert.match(source, /managerExtraTools/);
+  assert.match(source, /managerDeniedTools/);
+});

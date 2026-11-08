@@ -13,12 +13,14 @@ import {
   REMOTE_CODEX_TRANSCRIPT_METHOD_ID,
   REMOTE_DESCRIPTOR,
   REMOTE_METHOD_ID,
+  REMOTE_TOOLS_DESCRIPTOR,
+  REMOTE_TOOLS_METHOD_ID,
 } from '../lib/remote.js';
 
 test('host manifest exposes the read-only todos, codex sessions and models methods', () => {
   assert.equal(MANIFEST.package, 'dsh-paihuo');
   assert.equal(MANIFEST.face, 'host');
-  assert.equal(MANIFEST.invocations.length, 4);
+  assert.equal(MANIFEST.invocations.length, 5);
   const byId = new Map(MANIFEST.invocations.map((invocation) => [invocation.id, invocation]));
 
   const todos = byId.get(REMOTE_METHOD_ID);
@@ -59,6 +61,23 @@ test('host manifest exposes the read-only todos, codex sessions and models metho
     error: null,
   }).models[0].id, 'gpt-test');
 
+  const tools = byId.get(REMOTE_TOOLS_METHOD_ID);
+  assert.ok(tools);
+  assert.equal(tools.method, 'tools');
+  assert.deepEqual(tools.result.create().parse({
+    tools: [{ name: 'web_fetch', group: 'readonly', allowed: true, locked: false }],
+  }).tools[0].name, 'web_fetch');
+  assert.throws(() => tools.result.create().parse({
+    tools: [{ name: 'x', group: 'nope', allowed: true, locked: false }],
+  }));
+
+  assert.deepEqual(REMOTE_TOOLS_DESCRIPTOR, {
+    id: REMOTE_TOOLS_METHOD_ID,
+    service: 'paihuo',
+    namespace: 'paihuo',
+    method: 'tools',
+  });
+
   assert.deepEqual(REMOTE_DESCRIPTOR, {
     id: REMOTE_METHOD_ID,
     service: 'paihuo',
@@ -87,6 +106,7 @@ test('host manifest exposes the read-only todos, codex sessions and models metho
   assert.equal(typeof PaihuoRemote.prototype.codexSessions, 'function');
   assert.equal(typeof PaihuoRemote.prototype.codexTranscript, 'function');
   assert.equal(typeof PaihuoRemote.prototype.codexModels, 'function');
+  assert.equal(typeof PaihuoRemote.prototype.tools, 'function');
 });
 
 test('client contribution and header slots stay wired to the same ids', () => {
@@ -95,6 +115,7 @@ test('client contribution and header slots stay wired to the same ids', () => {
   assert.match(source, /paihuo\/codexSessions/);
   assert.match(source, /paihuo\/codexTranscript/);
   assert.match(source, /paihuo\/codexModels/);
+  assert.match(source, /paihuo\/tools/);
   assert.match(source, /REMOTE_METHOD_ID/);
   assert.match(source, /conversation\.session\.header\.utilities/);
   assert.match(source, /paihuo-questions/);

@@ -168,6 +168,8 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
 | `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务；可加入 `env127` 之类的共享环境名，发布/验证/造数任务带上同名 `resources` 即可互斥 |
 | `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设（Codex 模式不适用） |
+| `managerExtraTools` | `[]` | 额外放行给经理的工具名（默认族之外，含第三方 MCP）。在 设置 → 派活 →「经理工具放行」里勾选 |
+| `managerDeniedTools` | `[]` | 从经理默认工具面里去掉的工具名（如 `web_fetch`）。派活工具 `paihuo_*` 始终可用，不受这两项影响 |
 | `imRelay` | `true` | 把经理对工程师汇报的反应补发到该会话绑定的 IM 聊天（需要 dsh-im ≥ 5.9） |
 | `managerSection` / `engineerSection` | `null` | 覆盖内置提示词段 |
 
@@ -190,6 +192,15 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 ```
 
 带 `resources: ["env127"]` 的发布、验证、造数任务会全局互斥；主工作区任务（合并/发布/改文档）另有按项目的自动互斥，不需要额外声明。
+
+## 经理工具放行
+
+经理默认只能看到只读工具、记忆工具（`memory_*`）与 IM 工具（`dsh_im_*`）。打开 设置 → 派活 →「经理工具放行」，会在独立窗口里列出当前可用的**全部工具**（含第三方 MCP、当前经理继承面的工具），勾选即放行、取消即禁用：
+
+- 默认族（只读白名单 / 记忆 / IM）取消勾选会写进 `managerDeniedTools`；其它工具勾选会写进 `managerExtraTools`。
+- 派活工具（`paihuo_*`）固定在工具面上、不可关闭；配置里写它们会直接报错。
+- 保存后立刻重建已有的经理作用域，不需要重开会话；`tools.restrict` 的 allow/deny 与工具守卫都会按新配置生效。
+- 只影响**继承面**：注册在经理作用域里的工具（`paihuo_*`）不受影响；如果某个第三方工具根本不在清单里，说明它没有注册到全局或当前预设祖先层。
 
 ## 权限
 

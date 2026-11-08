@@ -215,6 +215,44 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.match(report.text, /测试完成/);
 });
 
+test('manager tool overrides reach the restrict lists and the guard', async () => {
+  const world = createWorld({
+    config: {
+      worktree: false,
+      managerExtraTools: ['pwsh', 'mcp__playwright__browser_click'],
+      managerDeniedTools: ['web_fetch'],
+    },
+  });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const restriction = world.restrictions.find((entry) => entry.agentId === manager.id);
+  assert.ok(restriction, 'manager must be restricted to a tool surface');
+  assert.ok(restriction.allow.includes('pwsh'));
+  assert.ok(restriction.allow.includes('mcp__playwright__browser_click'));
+  assert.ok(!restriction.deny.includes('pwsh'));
+  assert.ok(!restriction.allow.includes('web_fetch'));
+  assert.ok(restriction.deny.includes('web_fetch'));
+
+  const guard = world.guards.find((entry) => entry.agentId === manager.id);
+  assert.equal(guard.guard({ name: 'pwsh' }), undefined);
+  assert.equal(guard.guard({ name: 'read' }), undefined);
+  assert.equal(typeof guard.guard({ name: 'web_fetch' }), 'string');
+  assert.equal(typeof guard.guard({ name: 'write' }), 'string');
+
+  // 改配置后立刻刷新经理作用域：新加的放行不用重开会话。
+  world.config.managerExtraTools = ['write'];
+  world.config.managerDeniedTools = [];
+  world.emit('loader/volatile-update');
+  await settle(20);
+  const refreshed = world.restrictions.filter((entry) => entry.agentId === manager.id).at(-1);
+  assert.ok(refreshed.allow.includes('write'));
+  assert.ok(!refreshed.allow.includes('pwsh'));
+  const refreshedGuard = world.guards.filter((entry) => entry.agentId === manager.id).at(-1);
+  assert.equal(refreshedGuard.guard({ name: 'write' }), undefined);
+  assert.equal(typeof refreshedGuard.guard({ name: 'pwsh' }), 'string');
+});
+
 test('workstation limits queue the second task and release it on completion', async () => {
   const world = createWorld({ config: { totalWorkstations: 1, workstationsPerProject: 1, worktree: false } });
   const manager = await boot(world);

@@ -168,6 +168,8 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugi
 | `worktree` | `true` | One git worktree and branch per engineer |
 | `serializedResources` | `['browser']` | Global resources held by one task at a time; add environment names such as `env127` so deploy/verify/seed tasks can serialize on that environment |
 | `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` (not used in Codex mode) |
+| `managerExtraTools` | `[]` | Tool names allowed beyond the default families (including third-party MCP); tick them under Settings → Paihuo → “Manager tools” |
+| `managerDeniedTools` | `[]` | Default tools removed from the manager surface (e.g. `web_fetch`). `paihuo_*` tools are always available |
 | `imRelay` | `true` | Relay the manager's reaction to engineer reports into the IM chat bound to that session (requires dsh-im ≥ 5.9) |
 | `managerSection` / `engineerSection` | `null` | Override the built-in prompt sections |
 
@@ -190,6 +192,15 @@ You can also edit the profile's `cordis.patch.yml` directly:
 ```
 
 Tasks carrying `resources: ["env127"]` serialize globally; main-workspace tasks (merge/deploy/docs) are additionally serialized per project without any extra declaration.
+
+## Manager tools
+
+The manager sees read-only tools, memory tools (`memory_*`) and IM tools (`dsh_im_*`) by default. Open Settings → Paihuo → “Manager tools” for a standalone window listing **every available tool** (third-party MCP included, plus the tools inherited by the current manager session); tick to allow, untick to disable:
+
+- Unticking a default family (read-only / memory / IM) writes `managerDeniedTools`; ticking any other tool writes `managerExtraTools`.
+- Paihuo tools (`paihuo_*`) are always mounted and cannot be disabled; putting them in either config field is rejected.
+- Saving rebuilds existing manager scopes immediately — no new session needed; both the `tools.restrict` allow/deny lists and the tool guard follow the new config.
+- Only the inherited surface is affected; tools registered inside the manager scope (`paihuo_*`) are untouched. A tool missing from the list was not registered globally or on the preset ancestors.
 
 ## Permissions
 

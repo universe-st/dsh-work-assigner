@@ -70,3 +70,26 @@ test('serialized resources are unique and validated', () => {
   assert.deepEqual(config.serializedResources, ['browser', 'db']);
   assert.throws(() => resolveConfig({ serializedResources: ['!bad'] }), /资源名/);
 });
+
+test('manager tool overrides are normalized and protect paihuo tools', () => {
+  const config = resolveConfig(undefined);
+  assert.deepEqual(config.managerExtraTools, []);
+  assert.deepEqual(config.managerDeniedTools, []);
+
+  const custom = resolveConfig({
+    managerExtraTools: ['mcp__playwright__browser_click', '  web_fetch  ', 'web_fetch', '', 42, 'bad name'],
+    managerDeniedTools: ['web_search', 'web_search'],
+  });
+  assert.deepEqual(custom.managerExtraTools, ['mcp__playwright__browser_click', 'web_fetch']);
+  assert.deepEqual(custom.managerDeniedTools, ['web_search']);
+
+  // 派活工具始终可用，配置里写它就报错，避免用户以为能关掉经理的派发能力。
+  assert.throws(
+    () => resolveConfig({ managerDeniedTools: ['paihuo_dispatch'] }),
+    /派活工具/,
+  );
+  assert.throws(
+    () => resolveConfig({ managerExtraTools: ['paihuo_todo'] }),
+    /派活工具/,
+  );
+});
