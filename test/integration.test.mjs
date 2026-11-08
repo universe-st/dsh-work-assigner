@@ -154,6 +154,13 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.ok(restriction.allow.includes('memory_topic'));
   assert.ok(!restriction.deny.includes('memory_topic'));
 
+  // IM 工具放行：用户从 QQ 里要图片/文件时，回复链就是经理这一轮，工具被挡掉就
+  // 发不出去。按 `dsh_im_` 前缀放行，dsh-im 以后新增同类工具不必再改白名单。
+  for (const name of ['dsh_im_return_file', 'dsh_im_group_history', 'dsh_im_group_file']) {
+    assert.ok(restriction.allow.includes(name), `${name} must stay visible to the manager`);
+    assert.ok(!restriction.deny.includes(name), `${name} must not be denied`);
+  }
+
   // 预设作用域里的工具不受 restrict 掩码影响，真正兜底的是守卫。
   const guard = world.guards.find((entry) => entry.agentId === manager.id);
   assert.ok(guard, 'manager must install a tool guard');
@@ -167,6 +174,9 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   assert.equal(guard.guard({ name: 'memory_update' }), undefined);
   assert.equal(guard.guard({ name: 'memory_dream' }), undefined);
   assert.equal(guard.guard({ name: 'memory_topic' }), undefined);
+  // IM 工具即使在 restrict 之后才注册，也要由守卫放行。
+  assert.equal(guard.guard({ name: 'dsh_im_return_file' }), undefined);
+  assert.equal(guard.guard({ name: 'dsh_im_group_history' }), undefined);
 
   const result = await runDispatch(world, manager, {
     title: '补充 README 说明',

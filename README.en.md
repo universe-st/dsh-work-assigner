@@ -115,6 +115,8 @@ Paihuo relays the final reply of those turns to the chat bound to the session:
 - Requires dsh-im ≥ 5.9 (which provides `describeConversation`) and a session already bound to an IM chat. Otherwise it skips silently (`imRelay: false` turns it off explicitly) and everything else keeps working.
 - If dsh-im's own "deliver model answers" switch is also on, one turn may arrive twice; keep only one of the two switches.
 
+**Images and files**: when the user asks in IM (“send me the APK”), that turn started in the chat, so the manager can register the path with dsh-im's `dsh_im_return_file` (and read group history/files with `dsh_im_group_history` / `dsh_im_group_file`); the channel uploads it after the turn. A turn started from the DSH Web UI has no IM upload path and the tool reports an explicit error — ask again from the chat. The manager surface allow- and deny-lists plus the guard now pass the whole `dsh_im_` prefix.
+
 ### 🤖 Codex subagent menu
 
 In Codex mode, the manager header gains a 🤖 entry:
@@ -219,7 +221,7 @@ npm test    # 81 cases: pure policy, state, todo state machine and forced todo c
 - The forced todo check relies on DSH's `agent/turn-stopping`; on older hosts it silently does nothing and the rest of the plugin keeps working.
 - The check runs after the reply: the first reply has already been sent, and the follow-up check adds a short message in the same turn. After two ignored reminders the turn is allowed to end and a warning is logged. The check guarantees the manager looks and can fix the list, not that the list is necessarily correct.
 - Worktrees and branches of merged tasks are not deleted automatically; clean them up manually when needed.
-- The manager tool surface is narrowed to the read-only + memory whitelist plus `paihuo_*`, so profile-level MCP tools (e.g. browser) stay out of the manager prompt; the guard still rejects any call outside the whitelist, including tools registered after the scope is installed.
+- The manager tool surface is narrowed to the read-only + memory (`memory_*`) + IM (`dsh_im_*`) whitelist plus `paihuo_*`, so profile-level MCP tools (e.g. browser) stay out of the manager prompt; the guard still rejects any call outside the whitelist, including tools registered after the scope is installed.
 - The whole `memory_*` family from the meow-memory plugin is allowed: the memory database lives under `$DSH_HOME` and is not a workspace change, so the manager can call `memory_remember` / `memory_update` directly and idle-triggered dream consolidation actually persists.
 - The manager prompt section stays static (no live workstation counts, engineer list, or todo count) so re-assembling the system prompt on every step cannot invalidate the whole context cache; use `paihuo_engineers` / `paihuo_tasks` for live state.
 - The question inbox only sees questions produced by timed `ask_user_question`; questions asked before the preset switched to timed mode are not in the projection. An `open` question with `timeout: -1` must be answered in the built-in question panel; the inbox only offers to open it.

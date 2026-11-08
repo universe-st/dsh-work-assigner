@@ -115,6 +115,8 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 - 依赖 dsh-im ≥ 5.9（提供 `describeConversation`）且该会话已经绑定 IM 聊天；不满足时静默跳过（`imRelay: false` 可显式关闭），其它功能不受影响。
 - 如果同时打开 dsh-im 自己的「投递模型回答」，同一轮回复可能收到两条；两个开关选一个即可。
 
+**发图片和文件**：用户在 IM 里说「把 APK 发我」时，那一轮就是从聊天发起的，经理可以用 dsh-im 的 `dsh_im_return_file` 登记文件路径（`dsh_im_group_history` / `dsh_im_group_file` 读群历史和群文件）；渠道会在本轮结束后上传。从 DSH Web 发起的回合没有 IM 上传通道，工具会明确报错——去聊天里再要一次即可。经理工具面已按 `dsh_im_` 前缀整族放行，`Restrict` 与守卫两层都放。
+
 ### 🤖 Codex 子代理菜单
 
 Codex 模式下，经理会话右上角会出现 🤖 入口：
@@ -220,7 +222,7 @@ npm test    # 81 个用例：纯策略、状态、待办状态机与强制核对
 - 待办强制核对依赖 DSH 的 `agent/turn-stopping`：旧 Host 没有该事件时不会提醒，其余功能正常。
 - 强制核对发生在回复之后：第一次回复已经发出，提醒后的核对会在同一轮追加一条简短回复；连续忽略提醒最多 2 次后放行并记录 warning。核对只保证经理看到并有机会修正，不保证内容一定正确。
 - 合并任务的 worktree 与分支目前不会自动删除；需要时手动清理。
-- 经理工具面按白名单收窄（只读 + 记忆工具 + `paihuo_*`），Profile 级 MCP 工具（如浏览器）不会进入经理 prompt；守卫仍兜底拒绝白名单之外的调用，包括作用域安装之后才注册的工具。
+- 经理工具面按白名单收窄（只读 + 记忆工具 `memory_*` + IM 工具 `dsh_im_*` + `paihuo_*`），Profile 级 MCP 工具（如浏览器）不会进入经理 prompt；守卫仍兜底拒绝白名单之外的调用，包括作用域安装之后才注册的工具。
 - 记忆插件（meow-memory 的 `memory_*`）整族放行：记忆库在 `$DSH_HOME` 下，不属于工作区改动，所以经理可以直接 `memory_remember` / `memory_update`，空闲触发的记忆整理（dream）也能真正落库。
 - 经理提示段保持静态（不含实时工位数/工程师清单/待办数），避免每一步重装配 system prompt 时击穿整段上下文缓存；实时状态用 `paihuo_engineers` / `paihuo_tasks` 查询。
 - 问题表只展示 timed `ask_user_question` 产生的问题；预设改为 timed 之前的历史问题不会进入投影。`timeout: -1` 的 open 问题需要在 DSH 自带的问答面板里回答，问题表弹窗只提供打开入口。

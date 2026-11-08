@@ -287,6 +287,10 @@ export function createWorld(options = {}) {
     'memory_home',
     // 插件以后新增的记忆工具：按 `memory_` 前缀放行，不该又要改白名单。
     'memory_topic',
+    // IM 插件（dsh-im）的工具：发文件/图片回聊天、读群历史。
+    'dsh_im_return_file',
+    'dsh_im_group_history',
+    'dsh_im_group_file',
   ];
   services.tools = {
     schemas: () => hostToolNames.map((name) => ({ name })),
