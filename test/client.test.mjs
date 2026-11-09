@@ -18,6 +18,15 @@ test('client registers both manager header utilities', () => {
   assert.match(source, /todo\.badgeAria/);
 });
 
+test('manager rows show a LOADING animation while engineers work', () => {
+  assert.match(source, /REMOTE_ACTIVITY_METHOD_ID/);
+  assert.match(source, /function createActivityApi/);
+  assert.match(source, /function createActivityStore/);
+  assert.match(source, /data-paihuo-working/);
+  assert.match(source, /PH_rowLoadingSpin/);
+  assert.match(source, /installRowColors\(ctx, activity\)/);
+});
+
 test('manager tool allowlist dialog is wired into the settings page', () => {
   assert.match(source, /function ToolAccessDialog/);
   assert.match(source, /createToolsApi/);

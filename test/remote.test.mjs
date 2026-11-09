@@ -5,6 +5,8 @@ import { test } from 'node:test';
 import {
   MANIFEST,
   PaihuoRemote,
+  REMOTE_ACTIVITY_DESCRIPTOR,
+  REMOTE_ACTIVITY_METHOD_ID,
   REMOTE_CODEX_MODELS_DESCRIPTOR,
   REMOTE_CODEX_MODELS_METHOD_ID,
   REMOTE_CODEX_SESSIONS_DESCRIPTOR,
@@ -17,10 +19,10 @@ import {
   REMOTE_TOOLS_METHOD_ID,
 } from '../lib/remote.js';
 
-test('host manifest exposes the read-only todos, codex sessions and models methods', () => {
+test('host manifest exposes the read-only todos, activity, codex and tools methods', () => {
   assert.equal(MANIFEST.package, 'dsh-paihuo');
   assert.equal(MANIFEST.face, 'host');
-  assert.equal(MANIFEST.invocations.length, 5);
+  assert.equal(MANIFEST.invocations.length, 6);
   const byId = new Map(MANIFEST.invocations.map((invocation) => [invocation.id, invocation]));
 
   const todos = byId.get(REMOTE_METHOD_ID);
@@ -34,6 +36,13 @@ test('host manifest exposes the read-only todos, codex sessions and models metho
   assert.equal(todos.result.create().parse({ todos: [], counts: {
     pending: 0, inProgress: 0, paused: 0, completed: 0, open: 0,
   } }).todos.length, 0);
+
+  const activity = byId.get(REMOTE_ACTIVITY_METHOD_ID);
+  assert.ok(activity);
+  assert.equal(activity.method, 'activity');
+  assert.deepEqual(activity.result.create().parse({
+    managers: [{ managerId: 'm1', runningEngineers: 2, sessionEngineers: 1, codexEngineers: 1 }],
+  }).managers[0].runningEngineers, 2);
 
   const sessions = byId.get(REMOTE_CODEX_SESSIONS_METHOD_ID);
   assert.ok(sessions);
@@ -84,6 +93,12 @@ test('host manifest exposes the read-only todos, codex sessions and models metho
     namespace: 'paihuo',
     method: 'todos',
   });
+  assert.deepEqual(REMOTE_ACTIVITY_DESCRIPTOR, {
+    id: REMOTE_ACTIVITY_METHOD_ID,
+    service: 'paihuo',
+    namespace: 'paihuo',
+    method: 'activity',
+  });
   assert.deepEqual(REMOTE_CODEX_SESSIONS_DESCRIPTOR, {
     id: REMOTE_CODEX_SESSIONS_METHOD_ID,
     service: 'paihuo',
@@ -103,15 +118,44 @@ test('host manifest exposes the read-only todos, codex sessions and models metho
     method: 'codexModels',
   });
   assert.equal(typeof PaihuoRemote.prototype.todos, 'function');
+  assert.equal(typeof PaihuoRemote.prototype.activity, 'function');
   assert.equal(typeof PaihuoRemote.prototype.codexSessions, 'function');
   assert.equal(typeof PaihuoRemote.prototype.codexTranscript, 'function');
   assert.equal(typeof PaihuoRemote.prototype.codexModels, 'function');
   assert.equal(typeof PaihuoRemote.prototype.tools, 'function');
 });
 
+test('the activity method reports managers with running engineers', async () => {
+  const remote = {
+    runtime: {
+      ready: async () => {},
+      currentTurn: new Map(),
+      runs: new Map(),
+      store: {
+        get: () => ({
+          engineers: {
+            'session-e1': { sessionId: 'session-e1', managerId: 'session-m1', status: 'running' },
+            'codex-e2': { sessionId: 'codex-e2', managerId: 'session-m1', status: 'idle', backend: 'codex' },
+            'session-e3': { sessionId: 'session-e3', managerId: 'session-m2', status: 'idle' },
+          },
+        }),
+      },
+    },
+  };
+  remote.runtime.runs.set('supplement:codex-e2', { cancel() {} });
+  const result = await PaihuoRemote.prototype.activity.call(remote);
+  assert.deepEqual(result.managers, [{
+    managerId: 'session-m1',
+    runningEngineers: 2,
+    sessionEngineers: 1,
+    codexEngineers: 1,
+  }]);
+});
+
 test('client contribution and header slots stay wired to the same ids', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
   assert.match(source, /paihuo\/todos/);
+  assert.match(source, /paihuo\/activity/);
   assert.match(source, /paihuo\/codexSessions/);
   assert.match(source, /paihuo\/codexTranscript/);
   assert.match(source, /paihuo\/codexModels/);

@@ -10,7 +10,7 @@ English | **[简体中文](README.md)**
 - **Parallel engineers**: bounded by per-project and global workstations, per-engineer queues, and globally serialized resources (so front-end tests never fight over the browser). Main-workspace tasks (merge, deploy, docs) in the same project are mutually exclusive.
 - **Isolated worktrees**: one git worktree and branch per engineer; merge back with `paihuo_integrate` after review.
 - **Codex subagent mode**: switch the executor backend to `codex` and the plugin calls the local Codex CLI directly; the same Codex session can be reused and messaged. A 🤖 entry in the manager header shows each Codex subagent's session content.
-- **Visible roles**: sessions are color-coded in the list (manager = blue, engineer = yellow), and reports appear as a collapsible "📋 Paihuo report" card.
+- **Visible roles**: sessions are color-coded in the list (manager = blue, engineer = yellow), and reports appear as a collapsible "📋 Paihuo report" card. While any of its engineers are working, the manager row shows a spinning LOADING icon.
 - **Question inbox**: manager questions become non-blocking after one second and move to a top-right inbox with a red count badge; answering in the popup resumes the manager's task.
 - **Todos**: the manager maintains a persistent list with add/start/pause/resume/update/complete actions; the top-right panel shows the list and survives turns and reloads.
 - **Settings page**: Settings → Paihuo, or the "Configure" action on the `paihuo` row in the plugin page. Saved changes apply immediately, no restart.
@@ -213,7 +213,7 @@ The manager sees read-only tools, memory tools (`memory_*`) and IM tools (`dsh_i
 ## Development and tests
 
 ```powershell
-npm test    # 81 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, Remote manifest + simulated host integration + Codex CLI/menu/model catalog + client assembly/syntax
+npm test    # 98 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, Remote manifest + simulated host integration + Codex CLI/menu/model catalog + client assembly/syntax/engineer activity
 ```
 
 `test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, and a fake Codex CLI (exec, resume, failure, cancellation, worktree, model catalog).
@@ -238,6 +238,7 @@ npm test    # 81 cases: pure policy, state, todo state machine and forced todo c
 - The question inbox only sees questions produced by timed `ask_user_question`; questions asked before the preset switched to timed mode are not in the projection. An `open` question with `timeout: -1` must be answered in the built-in question panel; the inbox only offers to open it.
 - The todo panel is read-only; writes go through the manager tool. Each manager session keeps at most 100 items and automatically drops the oldest completed items when full. Todos live in plugin state rather than the session log, so no `todo/write` replay events are produced.
 - The todo Remote depends on DSH's `typert` and the Web client; without it the tool still works, but the top-right panel reports that it is unavailable.
+- The engineer-activity Remote uses the same `typert` path: without it the manager row simply omits the LOADING animation; dispatching and reports are unaffected.
 
 ## License
 
