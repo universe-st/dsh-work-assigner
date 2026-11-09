@@ -74,12 +74,12 @@ test('codex transcripts record readable messages, commands and errors', () => {
   assert.equal(transcript.entries[3].kind, 'error');
 
   // 跨经理/非 Codex 工程师不泄露转录。
-  assert.deepEqual(ui.transcript('m2', 'codex-t1'), { session: null, entries: [], truncated: false });
+  assert.deepEqual(ui.transcript('m2', 'codex-t1'), { session: null, entries: [] });
   assert.deepEqual(ui.sessions('m2').sessions.length, 1);
   assert.equal(ui.sessions('m2').sessions[0].engineerId, 'codex-t2');
 });
 
-test('codex transcript can omit command output and cap entries', () => {
+test('codex transcript can omit command output and keeps every entry in full', () => {
   const runtime = fakeRuntime();
   runtime.config.codexTranscriptOutput = false;
   const ui = createCodexTranscripts(runtime);
@@ -89,13 +89,25 @@ test('codex transcript can omit command output and cap entries', () => {
   ui.finishCommand(engineer, commandId, { output: 'TOP_SECRET', exitCode: 0, status: 'completed' });
   assert.equal(ui.transcript('m1', 'codex-t1').entries[0].output, undefined);
 
-  for (let index = 0; index < 260; index += 1) {
+  // 不再按条数截断：300 条消息全部保留，最近的一条仍在末尾。
+  for (let index = 0; index < 300; index += 1) {
     ui.recordAssistant(engineer, `message ${index}`);
   }
   const transcript = ui.transcript('m1', 'codex-t1');
-  assert.equal(transcript.entries.length, 200);
-  assert.equal(transcript.truncated, true);
-  assert.match(transcript.entries[transcript.entries.length - 1].text, /message 259/);
+  assert.equal(transcript.entries.length, 301);
+  assert.equal(transcript.truncated, undefined);
+  assert.match(transcript.entries[transcript.entries.length - 1].text, /message 299/);
+
+  // 不再按字符数截断：超长回复与命令输出原样保留。
+  runtime.config.codexTranscriptOutput = true;
+  const longText = 'x'.repeat(20_000);
+  ui.recordAssistant(engineer, longText);
+  const longCommandId = ui.startCommand(engineer, 'run big');
+  const longOutput = 'y'.repeat(100_000);
+  ui.finishCommand(engineer, longCommandId, { output: longOutput, exitCode: 0, status: 'completed' });
+  const latest = ui.transcript('m1', 'codex-t1').entries;
+  assert.equal(latest[latest.length - 2].text, longText);
+  assert.equal(latest[latest.length - 1].output, longOutput);
 });
 
 test('codex transcript persists through a table and deletes on release', async () => {
@@ -123,4 +135,29 @@ test('codex transcript persists through a table and deletes on release', async (
   ui.delete('codex-t1');
   assert.equal(records.has('codex-t1'), false);
   assert.equal(ui.transcript('m1', 'codex-t1').entries.length, 0);
+});
+
+test('legacy transcripts drop the old truncated flag on load', () => {
+  const runtime = fakeRuntime();
+  const records = new Map([['codex-t1', {
+    engineerId: 'codex-t1',
+    sessionId: 'thread-1',
+    model: 'gpt-5-codex',
+    updatedAt: 7,
+    entryCount: 1,
+    truncated: true,
+    entries: [{ id: 'e1', kind: 'assistant', label: 'Codex', text: '旧记录', at: 7 }],
+  }]]);
+  const table = {
+    entries: () => [...records.entries()][Symbol.iterator](),
+    get: (key) => records.get(key),
+    put: async () => {},
+    delete: async () => {},
+  };
+  const ui = createCodexTranscripts(runtime);
+  ui.load(table);
+  const transcript = ui.transcript('m1', 'codex-t1');
+  assert.equal(transcript.entries.length, 1);
+  assert.equal(transcript.entries[0].text, '旧记录');
+  assert.equal(transcript.truncated, undefined);
 });

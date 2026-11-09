@@ -122,7 +122,7 @@ Paihuo relays the final reply of those turns to the chat bound to the session:
 In Codex mode, the manager header gains a 🤖 entry:
 
 - It lists the manager's Codex engineers: running/idle, current task, model, project, worktree branch and Codex session id.
-- Selecting one shows tasks/manager notes, Codex replies, commands with truncated output, and errors; replies are rendered as Markdown.
+- Selecting one shows tasks/manager notes, Codex replies, commands with full output, and errors; replies are rendered as Markdown. Transcripts are never truncated: entries, text and command output are kept verbatim.
 - Commands are collapsed by default; expand one to see the full command and output. A session opens at the top without clipping the first line.
 - Running sessions update about every 0.5s and new replies are revealed progressively. The view follows the bottom while it is pinned there, stays put when scrolled away, and offers a “↓” button to jump back.
 - The panel is read-only and offers no messaging or cancellation controls.
@@ -161,7 +161,7 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugi
 | `codexSandbox` | `workspace-write` | Codex sandbox for the first run: `read-only` / `workspace-write` / `danger-full-access` |
 | `codexBypassApprovals` | `false` | Use `--dangerously-bypass-approvals-and-sandbox` |
 | `codexSkipGitRepoCheck` | `true` | Allow Codex outside a git repository |
-| `codexTranscriptOutput` | `true` | Record command output in the 🤖 menu (truncated; may be disabled) |
+| `codexTranscriptOutput` | `true` | Record command output in the 🤖 menu (full; may be disabled) |
 | `engineerModels` | `[]` | Selectable engineer models (`provider/model` + scope); empty = same model as the manager; ignored in Codex mode |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | Concurrent engineer limit per project / overall |
 | `maxEngineerQueue` | `6` | Per-engineer queue limit; new tasks are rejected when full |
@@ -224,7 +224,7 @@ npm test    # 81 cases: pure policy, state, todo state machine and forced todo c
 - If an engineer forgets `paihuo_report`, the last assistant reply is used and marked "no explicit report".
 - Codex mode calls the local CLI: Codex must be installed and logged in, and the version must support `codex exec resume`; dispatch reports a clear error when it is unavailable.
 - Codex `steer` is not true stdin injection: the plugin terminates the current CLI process and resumes the same session with the message; failure is reported if the session cannot be resumed.
-- Codex only returns its final answer. The 🤖 menu shows the tasks/replies/command summaries captured by this plugin, not internal reasoning, full stderr or untruncated output.
+- Codex only returns its final answer. The 🤖 menu shows the tasks/replies/commands and output captured by this plugin, not internal reasoning or full stderr. Transcripts are not truncated, so long sessions grow local storage.
 - Codex's model, approvals and sandbox come from `codexModel` / `codexSandbox` / `codexBypassApprovals` and Codex native config; the plugin offers no per-task sandbox override (apart from `model` as a Codex model id) and no automatic permission downgrades.
 - Codex session files remain on disk; `paihuo_release` only removes the plugin record, not the native session file.
 - A Codex worktree task must commit its changes; tracked uncommitted changes at the end mark the task blocked so `paihuo_integrate` cannot merge an empty branch.

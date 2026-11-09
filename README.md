@@ -122,7 +122,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 Codex 模式下，经理会话右上角会出现 🤖 入口：
 
 - 列出该经理名下所有 Codex 工程师：运行中/空闲、当前任务、模型、项目、worktree 分支、Codex session id。
-- 点选会话后显示任务/经理补充、Codex 回复、命令与截断输出、错误；回复按 Markdown 渲染。
+- 点选会话后显示任务/经理补充、Codex 回复、命令与完整输出、错误；回复按 Markdown 渲染。转录不截断：条目、正文和命令输出都原样保留。
 - 命令默认折叠，展开后看完整命令和输出；打开会话时从顶部开始，不截断首行。
 - 运行中的会话约每 0.5 秒更新；新回复会渐进呈现。视图停在底部时自动跟随，滚离底部后保持位置，并可用「↓」回到最新。
 - 只读展示，不提供发送消息或取消操作。
@@ -161,7 +161,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `codexSandbox` | `workspace-write` | Codex 首轮沙箱：`read-only` / `workspace-write` / `danger-full-access` |
 | `codexBypassApprovals` | `false` | 使用 `--dangerously-bypass-approvals-and-sandbox` |
 | `codexSkipGitRepoCheck` | `true` | 非 git 目录也允许运行 Codex |
-| `codexTranscriptOutput` | `true` | 在 🤖 菜单里记录命令输出（截断；可关闭） |
+| `codexTranscriptOutput` | `true` | 在 🤖 菜单里记录命令输出（完整；可关闭） |
 | `engineerModels` | `[]` | 可选工程师模型（`provider/model` + 适用范围），空 = 与经理同模型；Codex 模式下不生效 |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | 单项目 / 全局同时运行的工程师上限 |
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |
@@ -225,7 +225,7 @@ npm test    # 81 个用例：纯策略、状态、待办状态机与强制核对
 - 空闲工程师的补充轮如果恰好在插件重载期间结束，回复拿不到：对账时会清掉记录并回报一条「未能读取最终回复」，需要你到工程师会话里确认。
 - Codex 模式直接调用本机 CLI：需要已安装并登录 Codex，且版本支持 `codex exec resume`；CLI 不可用时派发会给出明确错误。
 - Codex 的 `steer` 不是真正的 stdin 中途注入：插件会终止当前 CLI 进程，再用同一会话续接消息；若会话无法恢复会报告失败。
-- Codex 只把最终回答交回父会话；🤖 菜单只展示插件捕获的任务/回复/命令摘要，不包含内部推理、完整 stderr 或未截断输出。
+- Codex 只把最终回答交回父会话；🤖 菜单只展示插件捕获的任务/回复/命令与输出，不包含内部推理与完整 stderr。转录不做截断，长会话会让本地存储随之变大。
 - Codex 的模型、审批与沙箱由 `codexModel` / `codexSandbox` / `codexBypassApprovals` 和 Codex 原生配置决定；插件不提供按任务覆盖（`model` 传 Codex 模型 id 除外），也不做权限自动降级。
 - Codex 会话文件会保留在磁盘；`paihuo_release` 只移除插件记录，不删除原生会话文件。
 - Codex 在 worktree 里完成任务后必须提交改动；结束时仍有未提交的已跟踪改动会把任务标为阻塞，避免 `paihuo_integrate` 合入空分支。

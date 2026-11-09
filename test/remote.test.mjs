@@ -43,8 +43,8 @@ test('host manifest exposes the read-only todos, codex sessions and models metho
   const transcript = byId.get(REMOTE_CODEX_TRANSCRIPT_METHOD_ID);
   assert.ok(transcript);
   assert.equal(transcript.method, 'codexTranscript');
-  assert.deepEqual(transcript.result.create().parse({ session: null, entries: [], truncated: false }), {
-    session: null, entries: [], truncated: false,
+  assert.deepEqual(transcript.result.create().parse({ session: null, entries: [] }), {
+    session: null, entries: [],
   });
 
   const models = byId.get(REMOTE_CODEX_MODELS_METHOD_ID);
