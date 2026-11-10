@@ -11,7 +11,7 @@
  * - PAIHUO_FAKE_DELAY_MS=<n>：延迟 n 毫秒后返回。
  */
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, statSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 const logPath = process.env.PAIHUO_FAKE_CODEX_LOG;
@@ -60,6 +60,14 @@ if (args.includes('debug') && args.includes('models')) {
           { effort: 'medium', description: 'balanced' },
           { effort: 'high', description: 'deep' },
         ],
+        input_modalities: ['text', 'image'],
+      },
+      {
+        slug: 'gpt-text-only',
+        display_name: 'GPT Text Only',
+        description: 'test model without image input',
+        visibility: 'list',
+        input_modalities: ['text'],
       },
       { slug: 'gpt-hidden', display_name: 'Hidden', description: 'hidden model', visibility: 'hide' },
     ],
@@ -73,7 +81,26 @@ const sessionId = isResume && typeof args[resumeIndex + 1] === 'string'
   ? args[resumeIndex + 1]
   : (process.env.PAIHUO_FAKE_CODEX_THREAD ?? 'fake-thread-1');
 const prompt = await readStdin();
-log({ kind: 'run', resume: isResume, sessionId, args, cwd: process.cwd(), prompt });
+// `-i/--image` 附带的图片文件：记录路径是否真的存在，供测试断言。
+const imagePaths = [];
+for (const [index, arg] of args.entries()) {
+  if (arg !== '-i' && arg !== '--image') continue;
+  const value = args[index + 1];
+  if (typeof value === 'string') imagePaths.push(value);
+}
+log({
+  kind: 'run',
+  resume: isResume,
+  sessionId,
+  args,
+  cwd: process.cwd(),
+  prompt,
+  images: imagePaths.map((path) => ({
+    path,
+    exists: existsSync(path),
+    bytes: existsSync(path) ? statSync(path).size : 0,
+  })),
+});
 
 const delayMatch = /PAIHUO_FAKE_DELAY_MS=(\d+)/.exec(prompt);
 const delay = delayMatch === null ? 0 : Number(delayMatch[1]);

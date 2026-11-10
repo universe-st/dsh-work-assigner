@@ -48,6 +48,16 @@ A session created from the preset switches back to the default preset (normally 
 
 Do **not** chat inside engineer sessions — they are the work site; open one only to watch progress.
 
+### User images travel with the task
+
+The manager only talks; the engineer is the one who has to match the screenshot. Images sent in chat are forwarded with the task:
+
+- Default `images: "auto"`: images from the **current user turn or the two before it** go with the task, so a screenshot survives a round of clarification questions before dispatch.
+- Pass `images: "none"` when the image is unrelated to this task (for example, the user only wanted the manager to look at it). Older images outside the window are not forwarded automatically; the receipt says how many were held back, and `images: "latest"` re-dispatches with the most recent image when it really is the relevant one.
+- Session engineers receive native DSH image blocks (the same thing a user upload would produce). Codex engineers receive `codex exec -i <file>`: the plugin copies the content-addressed attachment into a temp file with a real extension and removes it when the task ends. When the Codex model catalog (`input_modalities` from `codex debug models`) says the model is text-only, images are skipped and the task still runs.
+- If the engineer model does not accept image input, the task still runs: the plugin retries with the text-only task and adds a note that N images were not delivered, so the engineer can continue from text or report the blocker. The dispatch receipt and `paihuo_task` show it too.
+- Only attachment references are stored in the task ledger; a queued task resolves them when it starts, so image bytes never bloat the persisted state.
+
 ### Question inbox and todos
 
 - **Question inbox**: the 💬 entry in the manager header. The red count is the number of unanswered questions in the `userQuestions` projection. The popup groups questions by call and supports preset options, custom answers, and explicit skips; submitting sends the answer back to the manager as an `answer_to_pending_question` user message. Questions still waiting in the foreground (`open`) can be opened in the built-in question panel.
@@ -135,7 +145,7 @@ Manager (visible only in manager sessions):
 
 | Tool | Purpose |
 |---|---|
-| `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name). In Codex mode `model` is a Codex model id |
+| `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name), and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
 | `paihuo_engineers` | Executors under this manager and their state; Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
 | `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. An idle engineer's supplementary turn reports back automatically; Codex mode resumes the same session |
@@ -213,14 +223,15 @@ The manager sees read-only tools, memory tools (`memory_*`) and IM tools (`dsh_i
 ## Development and tests
 
 ```powershell
-npm test    # 98 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, Remote manifest + simulated host integration + Codex CLI/menu/model catalog + client assembly/syntax/engineer activity
+npm test    # 116 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
 ```
 
-`test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, and a fake Codex CLI (exec, resume, failure, cancellation, worktree, model catalog).
+`test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, a fake Codex CLI (exec, resume, images via `-i`, failure, cancellation, worktree, model catalog), and user-image forwarding.
 
 ## Known limitations
 
 - Manually archiving/deleting an engineer session fails its tasks and reports that to the manager.
+- User images travel only with `paihuo_dispatch`; `paihuo_message` remains text-only. When the image is unrelated or the engineer model rejects image input, the task still runs and the receipt says the images were not delivered.
 - If an engineer forgets `paihuo_report`, the last assistant reply is used and marked "no explicit report".
 - Codex mode calls the local CLI: Codex must be installed and logged in, and the version must support `codex exec resume`; dispatch reports a clear error when it is unavailable.
 - Codex `steer` is not true stdin injection: the plugin terminates the current CLI process and resumes the same session with the message; failure is reported if the session cannot be resumed.

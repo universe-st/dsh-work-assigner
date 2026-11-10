@@ -3,7 +3,9 @@
  * 让 apply() / 命令 / 工具 / 调度 / 回报 走同一条真实代码路径。
  */
 
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PROJECT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -186,6 +188,7 @@ export function createWorld(options = {}) {
       world.prompts.push({
         sessionId: request.sessionId,
         mode: request.mode,
+        content: request.content,
         text: messageText(request.content),
       });
       return { accepted: true };
@@ -405,10 +408,40 @@ export function createWorld(options = {}) {
     },
   };
 
+  // 附件服务的最小替身：图片按内容寻址落在一个临时目录里，
+  // 与真实 attachment-local 一样是「没有扩展名的对象文件」。
+  services.attachments = {
+    imageHostPath(ref) {
+      if (world.imageRoot === undefined) return undefined;
+      return join(world.imageRoot, String(ref?.attachmentId ?? '').replace('sha256:', ''));
+    },
+    async readImage(ref) {
+      const path = services.attachments.imageHostPath(ref);
+      if (path === undefined) throw new Error('测试里没有准备这张图片');
+      return { ref, data: new Uint8Array(readFileSync(path)) };
+    },
+  };
+
   world.ctx = ctx;
   for (const [name, service] of Object.entries(services)) {
     if (ctx[name] === undefined) ctx[name] = service;
   }
+  /** 把一张图片写进替身附件库；返回可放进用户消息的图片引用。 */
+  world.writeImage = (bytes, options = {}) => {
+    if (world.imageRoot === undefined) {
+      world.imageRoot = mkdtempSync(join(tmpdir(), 'paihuo-images-'));
+    }
+    const attachmentId = options.attachmentId ?? `sha256:${'0'.repeat(64)}`;
+    writeFileSync(join(world.imageRoot, attachmentId.replace('sha256:', '')), bytes);
+    return {
+      attachmentId,
+      mediaType: options.mediaType ?? 'image/png',
+      bytes: bytes.byteLength,
+      width: options.width ?? 1,
+      height: options.height ?? 1,
+      ...(options.name === undefined ? {} : { name: options.name }),
+    };
+  };
   world.ensureAgent = ensureAgent;
   world.ensureSession = ensureSession;
   world.append = append;

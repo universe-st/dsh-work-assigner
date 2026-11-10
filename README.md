@@ -48,6 +48,16 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 
 用户**不要**在工程师会话里对话；那是执行现场，点开只能看进度。
 
+### 图片随任务转发
+
+经理只负责沟通，真正照着截图改代码的是工程师；用户发在聊天里的图片会随任务一起转过去：
+
+- 默认 `images: "auto"`：把**本轮或之前两轮用户消息**里的图片随任务转给工程师。用户先发图、再回答一两次追问之后才派发，图片也不会丢。
+- 经理判断图片与这次任务无关（比如只是让它看图回答问题）时传 `images: "none"`；超过窗口的旧图不会自动转发，回执会提示还有几张旧图没转——确实要用时，取消后用 `images: "latest"` 重新派发。
+- 会话工程师收到的是 DSH 原生图片块（和用户直接发图一样，视觉模型直接看）；Codex 工程师收到的是 `codex exec -i <图片文件>`，插件把附件对象复制成带扩展名的临时文件，任务结束后清理。Codex 模型目录（`codex debug models` 的 `input_modalities`）明确不支持图片时，插件不附图片，任务照常执行。
+- 工程师模型不接受图片输入时，任务不会失败：插件退回纯文本任务书，并在任务书里写明「有 N 张图片没有送达」，让工程师按文字继续或如实报告阻塞；派发回执与 `paihuo_task` 里也会标出。
+- 图片只存引用（附件库里的不可变对象），排队任务开工时再取，不会把图片字节写进任务台账。
+
 ### 问题表与待办
 
 - **问题表**：经理会话右上角的 💬 图标，红圈数字是 `userQuestions` 投影里仍未回答的问题数。弹窗按提问批次分组，可选预设选项、填写自定义答案或跳过；提交后由 Host 把回答作为 `answer_to_pending_question` 用户消息送回经理会话。仍在等待前台回答（`open`）的问题可以直接打开 DSH 自带的问答面板。
@@ -135,7 +145,7 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 
 | 工具 | 说明 |
 |---|---|
-| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）。Codex 模式下 `model` 是 Codex 模型 id |
+| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
 | `paihuo_engineers` | 名下执行者与状态；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
 | `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。空闲工程师的补充轮结束后会自动回报；Codex 模式下通过 resume 续接 |
@@ -213,14 +223,15 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 ## 开发与测试
 
 ```powershell
-npm test    # 98 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法/工程师活跃度
+npm test    # 116 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、用户图片转发（会话 / Codex）、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法/工程师活跃度
 ```
 
-`test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截，以及假的 Codex CLI（执行、resume、失败、取消、worktree、模型目录）。
+`test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截、用户图片转发，以及假的 Codex CLI（执行、resume、图片 `-i`、失败、取消、worktree、模型目录）。
 
 ## 已知限制
 
 - 工程师会话被手动归档/删除时，相关任务会失败并回报经理。
+- 用户图片只随 `paihuo_dispatch` 转发；`paihuo_message`（给工程师的补充消息）仍是纯文本。图片与任务无关或工程师模型不支持图片时，任务照常执行，回执会写明未送达。
 - 工程师忘调 `paihuo_report` 时，用最后一条 assistant 回复兜底并标注「未显式报告」。
 - 空闲工程师的补充轮如果恰好在插件重载期间结束，回复拿不到：对账时会清掉记录并回报一条「未能读取最终回复」，需要你到工程师会话里确认。
 - Codex 模式直接调用本机 CLI：需要已安装并登录 Codex，且版本支持 `codex exec resume`；CLI 不可用时派发会给出明确错误。

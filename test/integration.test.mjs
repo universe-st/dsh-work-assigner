@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { apply } from '../lib/index.js';
-import { listCodexModels } from '../lib/codex.js';
+import { codexModelSupportsImages, listCodexModels } from '../lib/codex.js';
 import { createWorld, FAKE_CODEX, PROJECT, settle } from './harness.mjs';
 
 /**
@@ -14,6 +14,12 @@ import { createWorld, FAKE_CODEX, PROJECT, settle } from './harness.mjs';
  * Windows 下是 C:\Users\…\AppData\Local\Temp，两边都与 PROJECT 没有包含关系。
  */
 const OUTSIDE_PROJECT = tmpdir();
+
+/** 测试用 1x1 PNG。 */
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
 
 async function boot(world) {
   apply(world.ctx, world.config);
@@ -698,10 +704,12 @@ test('codex model catalog is read from codex debug models', () => {
   };
   const result = listCodexModels(runtime, true);
   assert.equal(result.error, null);
-  assert.deepEqual(result.models.map((model) => model.id), ['gpt-test-codex']);
+  assert.deepEqual(result.models.map((model) => model.id), ['gpt-test-codex', 'gpt-text-only']);
   assert.equal(result.models[0].name, 'GPT Test Codex');
   assert.deepEqual(result.models[0].reasoningLevels.map((level) => level.effort), ['low', 'medium', 'high']);
   assert.equal(result.models[0].defaultReasoningLevel, 'medium');
+  assert.deepEqual(result.models[0].inputModalities, ['text', 'image']);
+  assert.deepEqual(result.models[1].inputModalities, ['text']);
 });
 
 test('codex mode fails cleanly when the CLI is missing', async () => {
@@ -985,4 +993,179 @@ test('manager reactions to engineer reports are relayed to the bound IM chat', a
   world.append(manager.session, 'turn/end', { turn: 5, reason: { kind: 'completed' } });
   await settle(80);
   assert.equal(relayed.length, 1);
+});
+
+/** 经理在聊天里发一条带图用户消息。 */
+function appendUserImage(world, manager, image, turn = 1, text = '按这张图改。') {
+  world.append(manager.session, 'turn/start', { turn });
+  world.append(manager.session, 'user/message', {
+    content: [{ type: 'text', text }, { type: 'image', attachment: image }],
+    source: { kind: 'user', rpcId: `rpc-image-${turn}` },
+    role: 'user',
+  });
+}
+
+test('session engineers receive the images the user sent to the manager', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+  const image = world.writeImage(PNG_BYTES, { name: 'screenshot.png' });
+  appendUserImage(world, manager, image);
+
+  const dispatched = await runDispatch(world, manager, { title: '按图改布局', brief: '按用户发来的截图调整布局。' });
+  assert.match(dispatched.text, /图片：随任务附上 1 张/);
+
+  const prompt = world.prompts.find((entry) => entry.sessionId === dispatched.engineer);
+  assert.ok(prompt, 'engineer must receive the task');
+  const block = prompt.content.find((entry) => entry.type === 'image');
+  assert.ok(block, 'the image block must be forwarded with the task');
+  assert.equal(block.attachment.attachmentId, image.attachmentId);
+  assert.equal(block.encodedBytes, image.bytes);
+  assert.match(prompt.text, /按用户发来的截图调整布局/);
+
+  // 任务台账里也记住了这次转发的图片。
+  const task = world.stored.tasks[dispatched.task_id];
+  assert.equal(task.images.length, 1);
+  assert.equal(task.images[0].attachmentId, image.attachmentId);
+});
+
+test('dispatch accepts images:"none" to skip forwarding', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+  appendUserImage(world, manager, world.writeImage(PNG_BYTES));
+
+  const dispatched = await runDispatch(world, manager, {
+    title: '与图片无关的任务',
+    brief: '整理 README。',
+    images: 'none',
+  });
+  assert.doesNotMatch(dispatched.text, /图片：/);
+  const prompt = world.prompts.find((entry) => entry.sessionId === dispatched.engineer);
+  assert.ok(prompt);
+  assert.equal(prompt.content.some((entry) => entry.type === 'image'), false);
+  assert.equal(world.stored.tasks[dispatched.task_id].images, undefined);
+});
+
+test('stale images from older turns are not forwarded', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+  world.append(manager.session, 'turn/start', { turn: 1 });
+  world.append(manager.session, 'user/message', {
+    content: [{ type: 'image', attachment: world.writeImage(PNG_BYTES) }],
+    source: { kind: 'user', rpcId: 'rpc-old-image' },
+    role: 'user',
+  });
+  world.append(manager.session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+
+  // 几轮纯文本对话之后才派发：旧图不再转发。
+  world.append(manager.session, 'turn/start', { turn: 9 });
+  world.append(manager.session, 'user/message', {
+    content: [{ type: 'text', text: '现在做别的事。' }],
+    source: { kind: 'user', rpcId: 'rpc-later' },
+    role: 'user',
+  });
+  const dispatched = await runDispatch(world, manager, { title: '新任务', brief: '与新任务无关的工作。' });
+  assert.doesNotMatch(dispatched.text, /图片：随任务附上/);
+  // 回执提示有旧图没转，经理可以显式取回。
+  assert.match(dispatched.text, /1 张较早的用户图片未随任务转发/);
+  let prompt = world.prompts.find((entry) => entry.sessionId === dispatched.engineer);
+  assert.ok(prompt);
+  assert.equal(prompt.content.some((entry) => entry.type === 'image'), false);
+
+  // 经理确认这张图就是要用的：images:"latest" 忽略窗口。
+  await runTool(world, manager, 'paihuo_cancel', { task_id: dispatched.task_id });
+  const forced = await runDispatch(world, manager, {
+    title: '按旧图改',
+    brief: '按用户之前发的截图调整。',
+    images: 'latest',
+  });
+  assert.match(forced.text, /图片：随任务附上 1 张/);
+  prompt = world.prompts.find((entry) => entry.sessionId === forced.engineer && entry.content.some((part) => part.type === 'image'));
+  assert.ok(prompt, 'latest must forward the older image');
+});
+
+test('a text-only engineer model still runs the task, with an explicit note', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+  appendUserImage(world, manager, world.writeImage(PNG_BYTES));
+
+  // 模拟 DSH：工程师模型不接受图片输入。
+  const originalPrompt = world.ctx.sessionController.prompt;
+  world.ctx.sessionController.prompt = async (request, signal) => {
+    if (Array.isArray(request.content) && request.content.some((part) => part.type === 'image')) {
+      const error = new Error('Model "test-model" does not support image input.');
+      error.code = 'session/attachment-invalid';
+      throw error;
+    }
+    return originalPrompt(request, signal);
+  };
+
+  const dispatched = await runDispatch(world, manager, { title: '按图改', brief: '按截图调整按钮位置。' });
+  assert.match(dispatched.text, /图片：1 张未能随任务送达/);
+
+  const prompts = world.prompts.filter((entry) => entry.sessionId === dispatched.engineer);
+  assert.equal(prompts.length, 1, 'only the text-only retry should land');
+  assert.equal(prompts[0].content.some((entry) => entry.type === 'image'), false);
+  assert.match(prompts[0].text, /按截图调整按钮位置/);
+  assert.match(prompts[0].text, /图片没有送达/);
+  assert.ok(world.stored.tasks[dispatched.task_id].imageFallback);
+});
+
+test('codex engineers receive user images through codex exec -i', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+    appendUserImage(world, manager, world.writeImage(PNG_BYTES));
+
+    const dispatched = await runDispatch(world, manager, { title: '按图修样式', brief: '按截图修样式。' });
+    assert.match(dispatched.text, /图片：随任务附上 1 张/);
+
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const run = readCodexRuns(log.path)[0];
+    assert.ok(run.args.includes('-i'), 'codex exec must be called with -i');
+    assert.equal(run.images.length, 1);
+    assert.equal(run.images[0].exists, true, 'the image file must exist while codex runs');
+    assert.equal(run.images[0].bytes, PNG_BYTES.byteLength);
+    assert.match(run.images[0].path, /\.png$/);
+    assert.match(run.prompt, /派活任务 #t1/);
+
+    await waitFor(() => world.stored.tasks[dispatched.task_id]?.status === 'done');
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('codex models without image support still run the task, with a note', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({
+      config: { engineerBackend: 'codex', worktree: false, codexModel: 'gpt-text-only' },
+    });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+    appendUserImage(world, manager, world.writeImage(PNG_BYTES));
+
+    const dispatched = await runDispatch(world, manager, { title: '按图修样式', brief: '按截图修样式。' });
+    assert.match(dispatched.text, /图片：1 张未能随任务送达/);
+
+    await waitFor(() => readCodexRuns(log.path).length >= 1);
+    const run = readCodexRuns(log.path)[0];
+    assert.equal(run.args.includes('-i'), false, 'text-only codex model must not receive images');
+    assert.equal(run.images.length, 0);
+    assert.match(run.prompt, /图片没有送达/);
+    await waitFor(() => world.stored.tasks[dispatched.task_id]?.status === 'done');
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('codex model image support is unknown when the catalog is unavailable', async () => {
+  const runtime = { config: { codexCommand: 'paihuo-missing-codex-command' }, logger: { warn() {} } };
+  assert.equal(await codexModelSupportsImages(runtime, 'gpt-6-luna'), undefined);
+  assert.equal(await codexModelSupportsImages({}, null), undefined);
 });

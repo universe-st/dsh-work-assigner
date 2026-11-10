@@ -94,6 +94,29 @@ test('codex task and engineer fields hydrate', () => {
   assert.equal(hydrated.state.engineers.e1.backend, 'codex');
 });
 
+test('forwarded user images hydrate with the task', () => {
+  const state = createEmptyState();
+  state.tasks.t1 = task({
+    taskId: 't1',
+    images: [{
+      attachmentId: `sha256:${'a'.repeat(64)}`,
+      mediaType: 'image/png',
+      bytes: 70,
+      width: 1,
+      height: 1,
+      name: 'screenshot.png',
+      originalDimensions: { width: 2, height: 2 },
+    }],
+    imageFallback: 'Model "x" does not support image input.',
+  });
+  const hydrated = hydrateState(state);
+  assert.equal(hydrated.recovered, false);
+  assert.equal(hydrated.state.tasks.t1.images.length, 1);
+  assert.equal(hydrated.state.tasks.t1.images[0].name, 'screenshot.png');
+  assert.deepEqual(hydrated.state.tasks.t1.images[0].originalDimensions, { width: 2, height: 2 });
+  assert.match(hydrated.state.tasks.t1.imageFallback, /does not support image/);
+});
+
 test('task ids are monotonic', () => {
   const state = createEmptyState();
   assert.equal(nextTaskId(state), 't1');
