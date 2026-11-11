@@ -150,6 +150,9 @@ test('codex task prompt asks for a final answer instead of paihuo_report', () =>
   assert.match(text, /git add -A && git commit/);
   assert.doesNotMatch(text, /必须调用 `paihuo_report`/);
   assert.doesNotMatch(text, /paihuo_report/);
+  // Codex 没有任何 paihuo 工具，也不认识「派活」；任务书里提到专用工具只会制造干扰。
+  assert.doesNotMatch(text, /paihuo_/);
+  assert.doesNotMatch(text, /DSH 专用工具/);
 });
 
 test('codex report keeps the client card contract and skips unreported wording', () => {
