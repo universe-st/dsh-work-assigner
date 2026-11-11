@@ -72,6 +72,10 @@ test('manager prompt section is static while task state changes', () => {
   assert.match(first, /env127/);
   assert.match(first, /共享环境/);
   assert.match(first, /强制核对/);
+  // 任务书不得把经理会话的对话事件写进去：工程师没有上文，会把「用户已核实」当成既定事实。
+  assert.match(first, /不要出现「用户已核实/);
+  assert.match(first, /一条命令或一次查询/);
+  assert.match(first, /现状 \+ 不要做什么/);
 });
 
 test('completion report is compact and points at paihuo_task', () => {
