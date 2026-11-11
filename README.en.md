@@ -148,6 +148,7 @@ Manager (visible only in manager sessions):
 | `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name), and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
 | `paihuo_engineers` | Executors under this manager and their state; Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
+| `paihuo_transcript` | Recent conversation and commands of one engineer, for judging what it is doing and whether it is stuck: session events for session engineers, CLI transcripts for Codex. Pass `engineer` or `task_id`; `limit` defaults to 12, `include_tools: false` hides tool activity |
 | `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. An idle engineer's supplementary turn reports back automatically; Codex mode resumes the same session |
 | `paihuo_cancel` | Cancel a queued or running task (Codex tasks terminate the CLI process) |
 | `paihuo_integrate` | Dispatch an executor to merge a finished task's branch into the target branch, resolve conflicts and run tests; `notes` appends merge-specific verification scope; in Codex mode Codex performs the merge |

@@ -148,6 +148,7 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 | `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
 | `paihuo_engineers` | 名下执行者与状态；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
+| `paihuo_transcript` | 看某个工程师最近的对话与命令，判断它在做什么、是否卡住：会话工程师读会话事件，Codex 工程师读 CLI 转录。传 `engineer` 或 `task_id`；`limit` 默认 12，`include_tools: false` 只看双方发言 |
 | `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。空闲工程师的补充轮结束后会自动回报；Codex 模式下通过 resume 续接 |
 | `paihuo_cancel` | 取消排队或运行中的任务（Codex 任务会终止 CLI 进程） |
 | `paihuo_integrate` | 派执行者把已完成任务的分支合入目标分支，处理冲突并跑测试；`notes` 可写本次合并的额外核验/测试范围；Codex 模式下由 Codex 执行 |
