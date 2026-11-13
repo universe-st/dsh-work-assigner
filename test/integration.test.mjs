@@ -259,6 +259,61 @@ test('manager tool overrides reach the restrict lists and the guard', async () =
   assert.equal(typeof refreshedGuard.guard({ name: 'pwsh' }), 'string');
 });
 
+test('session engineers pick their model before the task prompt is admitted', async () => {
+  const world = createWorld({
+    config: {
+      worktree: false,
+      engineerModels: [{ provider: 'engineer-provider', model: 'engineer-model', description: '' }],
+    },
+  });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const result = await runDispatch(world, manager, {
+    title: '按指定模型执行',
+    brief: '读一下 package.json，把 name 字段写进报告。',
+    model: 'engineer-provider/engineer-model',
+  });
+  assert.equal(result.status, 'running', JSON.stringify(result));
+  assert.equal(result.model, 'engineer-provider/engineer-model');
+
+  const engineer = world.agents.get(result.engineer);
+  assert.ok(engineer, 'engineer agent should exist');
+  // 模型必须在回合开始前写进会话选择：Host 在 step preparation 时就固定了
+  // provider/model，`agent/request` 事后再改会被直接拒绝。
+  assert.deepEqual(engineer.model.current(), { provider: 'engineer-provider', model: 'engineer-model' });
+  assert.deepEqual(
+    world.modelSelections.filter((entry) => entry.agentId === result.engineer),
+    [{ agentId: result.engineer, provider: 'engineer-provider', model: 'engineer-model' }],
+  );
+  assert.equal(world.handlers.get('agent/request'), undefined, '工程师作用域不能再注册 agent/request 模型覆盖');
+
+  const order = world.timeline.filter((entry) => (
+    entry.agentId === result.engineer || entry.sessionId === result.engineer
+  ));
+  const selectIndex = order.findIndex((entry) => entry.kind === 'model-select');
+  const promptIndex = order.findIndex((entry) => entry.kind === 'prompt');
+  assert.ok(selectIndex !== -1, 'model selection must be recorded');
+  assert.ok(promptIndex > selectIndex, 'model selection must precede the task prompt');
+});
+
+test('session engineers inherit the manager model when no engineer model is configured', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+  await enterMode(world, manager);
+
+  const result = await runDispatch(world, manager, {
+    title: '继承经理模型',
+    brief: '读一下 package.json，把 name 字段写进报告。',
+  });
+  assert.equal(result.status, 'running', JSON.stringify(result));
+  assert.equal(result.model, 'test-provider/test-model');
+
+  const engineer = world.agents.get(result.engineer);
+  assert.ok(engineer, 'engineer agent should exist');
+  assert.deepEqual(engineer.model.current(), { provider: 'test-provider', model: 'test-model' });
+});
+
 test('workstation limits queue the second task and release it on completion', async () => {
   const world = createWorld({ config: { totalWorkstations: 1, workstationsPerProject: 1, worktree: false } });
   const manager = await boot(world);

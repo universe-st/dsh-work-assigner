@@ -46,6 +46,10 @@ export function createWorld(options = {}) {
     stored: undefined,
     projection: undefined,
     seq: 0,
+    /** 测试里 agent.model.select() 的调用记录：{ agentId, provider, model }。 */
+    modelSelections: [],
+    /** 事件时间线：模型选择与消息投递的先后顺序。 */
+    timeline: [],
   };
 
   const services = {};
@@ -155,7 +159,23 @@ export function createWorld(options = {}) {
           return execute();
         },
       };
-      agent = { id, session, ctx: agentCtx };
+      agent = {
+        id,
+        session,
+        ctx: agentCtx,
+        /** AgentModel 的最小替身：会话当前选择。 */
+        modelSelection: undefined,
+        model: {
+          current() {
+            return agent.modelSelection === undefined ? undefined : { ...agent.modelSelection };
+          },
+          select(selection) {
+            agent.modelSelection = { provider: selection.provider, model: selection.model };
+            world.modelSelections.push({ agentId: id, provider: selection.provider, model: selection.model });
+            world.timeline.push({ kind: 'model-select', agentId: id, provider: selection.provider, model: selection.model });
+          },
+        },
+      };
       world.agents.set(id, agent);
     }
     return agent;
@@ -191,6 +211,7 @@ export function createWorld(options = {}) {
         content: request.content,
         text: messageText(request.content),
       });
+      world.timeline.push({ kind: 'prompt', sessionId: request.sessionId, mode: request.mode });
       return { accepted: true };
     },
     cancel() {
