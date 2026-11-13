@@ -173,6 +173,7 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugi
 | `codexBypassApprovals` | `false` | Use `--dangerously-bypass-approvals-and-sandbox` |
 | `codexSkipGitRepoCheck` | `true` | Allow Codex outside a git repository |
 | `codexTranscriptOutput` | `true` | Record command output in the 🤖 menu (full; may be disabled) |
+| `codexCompletionGraceMs` | `120000` | Grace period (ms) after Codex reports its turn as finished, waiting for the CLI process to exit. On timeout the process tree is killed and the turn settles with the final answer already captured (`0` disables). Covers hangs where a leftover child keeps stdio open so `close` never fires |
 | `engineerModels` | `[]` | Selectable engineer models (`provider/model` + scope); empty = same model as the manager; ignored in Codex mode |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | Concurrent engineer limit per project / overall |
 | `maxEngineerQueue` | `6` | Per-engineer queue limit; new tasks are rejected when full |

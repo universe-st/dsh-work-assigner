@@ -612,6 +612,72 @@ test('codex mode dispatches a CLI engineer and wakes the manager', async () => {
   }
 });
 
+test('codex turns settle after the completion grace even if the CLI never exits', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({
+      config: { engineerBackend: 'codex', worktree: false, codexCompletionGraceMs: 200 },
+    });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const started = Date.now();
+    const result = await runDispatch(world, manager, {
+      title: '收尾宽限',
+      brief: '执行任务并在最终回答里说明结果。PAIHUO_FAKE_LINGER=5000',
+    });
+    assert.equal(result.status, 'running');
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'done');
+    assert.ok(
+      Date.now() - started < 4000,
+      '宽限到点就该结算，不必等假 CLI 自己退出',
+    );
+
+    const task = world.stored.tasks[result.task_id];
+    assert.equal(task.report.outcome, 'success');
+    assert.match(task.report.summary, /FAKE_CODEX_OK/);
+    assert.equal(world.stored.engineers[result.engineer].status, 'idle');
+
+    const report = world.prompts.find(
+      (entry) => entry.sessionId === manager.id && entry.text.includes('【派活系统回报'),
+    );
+    assert.ok(report, 'manager must still receive the report');
+    assert.match(report.text, /FAKE_CODEX_OK/);
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('a codex turn settles when a leftover child keeps stdio open', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({
+      config: { engineerBackend: 'codex', worktree: false, codexCompletionGraceMs: 300 },
+    });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const started = Date.now();
+    const result = await runDispatch(world, manager, {
+      title: '孤儿进程',
+      brief: '执行任务。PAIHUO_FAKE_ORPHAN=4000',
+    });
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'done', 8000);
+    assert.ok(Date.now() - started < 4000, '不能等到孙子进程退出才结算');
+
+    const task = world.stored.tasks[result.task_id];
+    assert.equal(task.report.outcome, 'success');
+    assert.match(task.report.summary, /FAKE_CODEX_OK/);
+    const transcript = await runTool(world, manager, 'paihuo_transcript', {
+      task_id: result.task_id,
+      limit: 50,
+    });
+    assert.match(JSON.stringify(transcript), /强制收尾/);
+  } finally {
+    log.cleanup();
+  }
+});
+
 test('codex engineers can be reused and messaged', async () => {
   const log = beginCodexLog();
   try {

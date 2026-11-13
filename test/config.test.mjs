@@ -12,6 +12,7 @@ test('defaults are complete and frozen', () => {
   assert.equal(config.codexReasoningEffort, null);
   assert.equal(config.codexSandbox, 'workspace-write');
   assert.equal(config.codexBypassApprovals, false);
+  assert.equal(config.codexCompletionGraceMs, 120_000);
   assert.equal(config.workstationsPerProject, 2);
   assert.equal(config.totalWorkstations, 4);
   assert.equal(config.worktree, true);
@@ -54,6 +55,14 @@ test('unknown keys fail loudly', () => {
 test('numbers must be positive integers', () => {
   assert.throws(() => resolveConfig({ totalWorkstations: 0 }), /totalWorkstations/);
   assert.throws(() => resolveConfig({ workstationsPerProject: 1.5 }), /workstationsPerProject/);
+});
+
+test('codex completion grace accepts any non-negative integer', () => {
+  assert.equal(resolveConfig({ codexCompletionGraceMs: 0 }).codexCompletionGraceMs, 0);
+  assert.equal(resolveConfig({ codexCompletionGraceMs: 30_000 }).codexCompletionGraceMs, 30_000);
+  assert.throws(() => resolveConfig({ codexCompletionGraceMs: -1 }), /codexCompletionGraceMs/);
+  assert.throws(() => resolveConfig({ codexCompletionGraceMs: 1.5 }), /codexCompletionGraceMs/);
+  assert.throws(() => resolveConfig({ codexCompletionGraceMs: '2000' }), /codexCompletionGraceMs/);
 });
 
 test('engineer models are normalized', () => {

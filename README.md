@@ -173,6 +173,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `codexBypassApprovals` | `false` | 使用 `--dangerously-bypass-approvals-and-sandbox` |
 | `codexSkipGitRepoCheck` | `true` | 非 git 目录也允许运行 Codex |
 | `codexTranscriptOutput` | `true` | 在 🤖 菜单里记录命令输出（完整；可关闭） |
+| `codexCompletionGraceMs` | `120000` | Codex 回报本轮结束后，等 CLI 进程退出的宽限毫秒数；到点还没退出就杀掉进程树、用已捕获的最终回答结算（`0` = 关闭）。用于兜住「Codex 留下的常驻子进程攥住 stdio，收不到 `close`」这类卡死 |
 | `engineerModels` | `[]` | 可选工程师模型（`provider/model` + 适用范围），空 = 与经理同模型；Codex 模式下不生效 |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | 单项目 / 全局同时运行的工程师上限 |
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |

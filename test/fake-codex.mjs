@@ -9,6 +9,10 @@
  * - PAIHUO_FAKE_FAIL：输出 turn.failed 并以 1 退出。
  * - PAIHUO_FAKE_HANG：不返回，直到被测试取消。
  * - PAIHUO_FAKE_DELAY_MS=<n>：延迟 n 毫秒后返回。
+ * - PAIHUO_FAKE_LINGER=<n>：回报 turn.completed 后继续存活 n 毫秒（模拟
+ *   常驻子进程攥住 stdio、父进程已经报完却收不到 close 的情形）。
+ * - PAIHUO_FAKE_ORPHAN=<n>：回报 turn.completed 后派生一个存活 n 毫秒的
+ *   孙子进程（stdio 继承），自己立刻退出，复现「进程已退、stdio 未关」。
  */
 
 import { appendFileSync, existsSync, statSync } from 'node:fs';
@@ -132,4 +136,22 @@ process.stdout.write(`${JSON.stringify({
   item: { id: 'item_2', type: 'agent_message', text },
 })}\n`);
 process.stdout.write(`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
+
+const lingerMatch = /PAIHUO_FAKE_LINGER=(\d+)/.exec(prompt);
+const linger = lingerMatch === null ? 0 : Number(lingerMatch[1]);
+if (linger > 0) await new Promise((resolve) => setTimeout(resolve, linger));
+
+const orphanMatch = /PAIHUO_FAKE_ORPHAN=(\d+)/.exec(prompt);
+const orphan = orphanMatch === null ? 0 : Number(orphanMatch[1]);
+if (orphan > 0) {
+  const { spawn } = await import('node:child_process');
+  // 模拟 Codex 留下的守护进程：继承 stdio 后自己活很久，父进程照常退出。
+  const keeper = spawn(process.execPath, ['-e', `setTimeout(() => {}, ${orphan})`], {
+    stdio: 'inherit',
+    detached: true,
+    windowsHide: true,
+  });
+  keeper.unref();
+}
+
 process.exit(0);
