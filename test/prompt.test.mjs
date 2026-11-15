@@ -12,7 +12,8 @@ function fakeRuntime() {
       worktree: true,
       workstationsPerProject: 2,
       totalWorkstations: 4,
-      serializedResources: ['browser', 'env127'],
+      acceptance: 'independent',
+      reuseActiveMinutes: 180,
     },
     store: {
       get: () => ({
@@ -69,8 +70,8 @@ test('manager prompt section is static while task state changes', () => {
   assert.match(first, /ask_user_question/);
   assert.match(first, /问题表/);
   assert.match(first, /不要用 `todo_write`/);
-  assert.match(first, /env127/);
-  assert.match(first, /共享环境/);
+  assert.match(first, /独立工程师验收/);
+  assert.match(first, /不要立刻合并或交付/);
   assert.match(first, /强制核对/);
   // 任务书不得把经理会话的对话事件写进去：工程师没有上文，会把「用户已核实」当成既定事实。
   assert.match(first, /不要出现「用户已核实/);

@@ -7,7 +7,7 @@
 - **经理不阻塞**：派发工具立即返回，本轮直接结束，用户可以接着说下一个需求。
 - **待办强制核对**：每轮结束前若没有查看/修改待办，系统会在同一轮内强制提醒经理先 `list`、对照真实任务状态修正，再结束；避免回复用户时清单已经过期。
 - **经理不动手**：预制预设只挂只读工具，插件再用工具守卫兜底；改文件、跑构建一律交给工程师。
-- **工程师并行**：受工位、单工程师排队、全局串行资源三层约束，前端测试不会互抢浏览器；同一项目的主工作区任务（合并、发布、改文档）自动互斥。
+- **工程师并行**：受工位、单工程师排队两层约束；同一项目的主工作区任务（合并、发布、改文档）自动互斥。
 - **独立 worktree**：每个工程师一个分支，改动隔离；验收后用 `paihuo_integrate` 合回基线分支并跑测试。
 - **Codex 子代理模式**：把执行者后端切换为 `codex` 后，插件直接调用本机 Codex CLI 执行任务；同一 Codex 会话可以复用、追加消息。经理会话右上角有 🤖 入口，可查看每个 Codex 子代理的会话内容。
 - **角色可见**：会话列表按角色着色（经理蓝底白字、工程师黄底黑字），回报在聊天里显示为「📋 派活回报」卡片。经理名下有工程师正在执行时，经理会话左侧会显示旋转的 LOADING 图标。
@@ -70,6 +70,19 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 - **强制新会话**：传 `reuse: "new"`。
 - **指定会话**：传 `engineer`（`paihuo_engineers` 可查会话 id、类型与最近活跃时间），此时按该会话现有的工作目录与队列执行。
 - 复用会让新任务沿用该会话已有的 worktree/分支，回执里会写明「会话复用：<会话 id>（同项目开发会话，最近活跃 X 分钟前）」，没复用上也会写明原因（例如「开发会话最近都没有活跃过（时间窗 3 小时）」）。
+
+### 验收方式
+
+设置 → 派活 →「验收」，或配置项 `acceptance`：
+
+- **`self`（默认）：开发自主验收**。工程师自己跑测试，把命令与结果写进 `paihuo_report`；经理按报告 + `paihuo_task` / `paihuo_transcript` / 自己只读看 diff 判断能不能交付。
+- **`independent`：独立工程师验收**。开发/通用任务报告成功后，插件自动派一个**独立验收任务**（`kind: "test"`，走测试池会话）：
+  - 任务书里带上原任务书（验收标准所在）、执行者报告（只当线索）、分支与提交；
+  - 验收工程师在自己的 worktree 里 `git checkout -B verify/<任务号> <执行者分支>`，自己读 diff、跑测试、按验收标准逐条核对；
+  - 结论以 `paihuo_report` 回报：`success` = 通过，`failed` = 不通过（写清哪条没满足、怎么复现、要补什么），`blocked` = 无法验证；
+  - 结论会写回原任务（`acceptanceStatus`: 待验收/通过/不通过）并单独回报给经理，回报里直接写「验收通过，可以合并/交付」或「验收未通过，不要合并/交付」；
+  - 验收任务本身不会再派生验收任务，不会无限套娃；合并任务（`paihuo_integrate`）也不参与。
+- 独立验收会让每个开发任务多一次往返（多一个会话回合），换来的是"报告自述"不再等于"验收"。任务越小越不值，任务越大越值。
 
 ### 图片随任务转发
 
@@ -134,7 +147,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
   - `steer`：中断当前 CLI 进程，然后用同一会话续接这条消息（若会话无法恢复会报告失败）。
 - 空闲 Codex 工程师收到 `paihuo_message` 时直接续接一轮；回复以「【派活系统补充回复】」回到经理会话。
 - `paihuo_release` 可以把空闲 Codex 工程师移出插件；Codex 原生会话文件仍保留在磁盘。
-- 工位、排队、`priority: "urgent"`、串行资源、主工作区互斥、worktree 仍然生效。worktree 任务完成后 Codex 必须把改动提交到自己的分支，否则任务会报告阻塞。
+- 工位、排队、`priority: "urgent"`、主工作区互斥、worktree 仍然生效。worktree 任务完成后 Codex 必须把改动提交到自己的分支，否则任务会报告阻塞。
 - `paihuo_integrate` 在 Codex 模式下也交给 Codex 工程师，在主工作区合并并跑测试。
 
 ### 和 IM 一起用
@@ -168,7 +181,7 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 
 | 工具 | 说明 |
 |---|---|
-| `paihuo_dispatch` | 派发任务；支持 `kind`（`dev`/`test`/`general`，决定复用哪类会话）、`reuse`（默认 `auto` 复用活跃会话，`"new"` 强制新建）、`engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
+| `paihuo_dispatch` | 派发任务；支持 `kind`（`dev`/`test`/`general`，决定复用哪类会话）、`reuse`（默认 `auto` 复用活跃会话，`"new"` 强制新建）、`engineer`（挂到已有会话后面，忙就排队）、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
 | `paihuo_engineers` | 名下执行者与状态（类型、最近活跃时间）；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
 | `paihuo_transcript` | 看某个工程师最近的对话与命令，判断它在做什么、是否卡住：会话工程师读会话事件，Codex 工程师读 CLI 转录。传 `engineer` 或 `task_id`；`limit` 默认 12，`include_tools: false` 只看双方发言 |
@@ -202,7 +215,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |
 | `reuseActiveMinutes` | `180` | 会话复用时间窗（分钟）：只复用这么久之内活跃过的同类型工程师会话；`0` = 不限时间窗 |
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
-| `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务；可加入 `env127` 之类的共享环境名，发布/验证/造数任务带上同名 `resources` 即可互斥 |
+| `acceptance` | `self` | 验收方式：`self` = 开发自主验收（工程师自己跑测试并写进报告）；`independent` = 独立工程师验收（开发任务成功后自动派验收任务，见「验收方式」） |
 | `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设（Codex 模式不适用） |
 | `managerExtraTools` | `[]` | 额外放行给经理的工具名（默认族之外，含第三方 MCP）。在 设置 → 派活 →「经理工具放行」里勾选 |
 | `managerDeniedTools` | `[]` | 从经理默认工具面里去掉的工具名（如 `web_fetch`）。派活工具 `paihuo_*` 始终可用，不受这两项影响 |
@@ -222,12 +235,10 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
     workstationsPerProject: 2
     totalWorkstations: 4
     worktree: true
-    serializedResources:
-      - browser
-      - env127
+    acceptance: independent
 ```
 
-带 `resources: ["env127"]` 的发布、验证、造数任务会全局互斥；主工作区任务（合并/发布/改文档）另有按项目的自动互斥，不需要额外声明。
+主工作区任务（合并/发布/改文档）按项目自动互斥，不需要额外声明。
 
 ## 经理工具放行
 

@@ -18,7 +18,7 @@ test('defaults are complete and frozen', () => {
   assert.equal(config.workstationsPerProject, 2);
   assert.equal(config.totalWorkstations, 4);
   assert.equal(config.worktree, true);
-  assert.deepEqual(config.serializedResources, ['browser']);
+  assert.equal(config.acceptance, 'self');
   assert.deepEqual(config.engineerModels, []);
   assert.ok(Object.isFrozen(config));
 });
@@ -84,10 +84,12 @@ test('engineer models are normalized', () => {
   assert.throws(() => resolveConfig({ engineerModels: [{ provider: 'p', model: 'm', extra: 1 }] }), /未知字段 extra/);
 });
 
-test('serialized resources are unique and validated', () => {
-  const config = resolveConfig({ serializedResources: ['Browser', 'browser', 'db'] });
-  assert.deepEqual(config.serializedResources, ['browser', 'db']);
-  assert.throws(() => resolveConfig({ serializedResources: ['!bad'] }), /资源名/);
+test('acceptance mode accepts only the two documented values', () => {
+  assert.equal(resolveConfig({ acceptance: 'independent' }).acceptance, 'independent');
+  assert.equal(resolveConfig({ acceptance: 'self' }).acceptance, 'self');
+  assert.throws(() => resolveConfig({ acceptance: 'auto' }), /acceptance/);
+  // 旧配置里的串行资源已经不认了：删掉的功能不该悄悄留着。
+  assert.throws(() => resolveConfig({ serializedResources: ['browser'] }), /未知字段 serializedResources/);
 });
 
 test('manager tool overrides are normalized and protect paihuo tools', () => {

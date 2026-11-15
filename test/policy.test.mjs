@@ -68,25 +68,21 @@ test('canSupervise refuses a higher engineer permission', () => {
   assert.equal(canSupervise('workspace-write', 'danger-full-access'), false);
 });
 
-test('canStartTask enforces project, total and resource limits', () => {
+test('canStartTask enforces project and total limits', () => {
   const tasks = {
-    a: { status: 'running', projectKey: 'p', resources: ['browser'] },
-    b: { status: 'running', projectKey: 'q', resources: [] },
+    a: { status: 'running', projectKey: 'p' },
+    b: { status: 'running', projectKey: 'q' },
   };
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'p', resources: [], workstationsPerProject: 1, totalWorkstations: 4 }),
+    canStartTask({ tasks, projectKey: 'p', workstationsPerProject: 1, totalWorkstations: 4 }),
     { ok: false, reason: 'project-workstations-full' },
   );
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'p', resources: [], workstationsPerProject: 3, totalWorkstations: 2 }),
+    canStartTask({ tasks, projectKey: 'p', workstationsPerProject: 3, totalWorkstations: 2 }),
     { ok: false, reason: 'total-workstations-full' },
   );
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'p', resources: ['browser'], workstationsPerProject: 3, totalWorkstations: 4 }),
-    { ok: false, reason: 'resource-busy:browser' },
-  );
-  assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'p', resources: ['db'], workstationsPerProject: 3, totalWorkstations: 4 }),
+    canStartTask({ tasks, projectKey: 'p', workstationsPerProject: 3, totalWorkstations: 4 }),
     { ok: true },
   );
   assert.equal(runningByProject(tasks, 'q'), 1);
@@ -94,24 +90,24 @@ test('canStartTask enforces project, total and resource limits', () => {
 
 test('canStartTask serializes main-workspace tasks per project', () => {
   const tasks = {
-    a: { taskId: 'a', status: 'running', projectKey: 'p', resources: [], useWorktree: false },
-    b: { taskId: 'b', status: 'running', projectKey: 'q', resources: [], useWorktree: false },
-    c: { taskId: 'c', status: 'running', projectKey: 'p', resources: [], useWorktree: true },
+    a: { taskId: 'a', status: 'running', projectKey: 'p', useWorktree: false },
+    b: { taskId: 'b', status: 'running', projectKey: 'q', useWorktree: false },
+    c: { taskId: 'c', status: 'running', projectKey: 'p', useWorktree: true },
   };
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'p', resources: [], workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'main' }),
+    canStartTask({ tasks, projectKey: 'p', workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'main' }),
     { ok: false, reason: 'main-workspace-busy' },
   );
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'p', resources: [], workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'worktree' }),
+    canStartTask({ tasks, projectKey: 'p', workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'worktree' }),
     { ok: true },
   );
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'q', resources: [], workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'main' }),
+    canStartTask({ tasks, projectKey: 'q', workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'main' }),
     { ok: false, reason: 'main-workspace-busy' },
   );
   assert.deepEqual(
-    canStartTask({ tasks, projectKey: 'r', resources: [], workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'main' }),
+    canStartTask({ tasks, projectKey: 'r', workstationsPerProject: 3, totalWorkstations: 4, workspaceMode: 'main' }),
     { ok: true },
   );
   assert.equal(runningMainWorkspaceTask(tasks, 'p')?.taskId, 'a');

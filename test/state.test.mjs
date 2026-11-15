@@ -20,7 +20,6 @@ function task(overrides) {
     projectKey: 'c:\\work\\demo',
     model: null,
     priority: 'normal',
-    resources: [],
     useWorktree: false,
     status: 'queued',
     createdAt: 1,

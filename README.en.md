@@ -7,7 +7,7 @@ English | **[简体中文](README.md)**
 - **Non-blocking manager**: dispatching returns immediately and the turn ends, so the user can keep talking.
 - **Forced todo check**: if a manager turn ends without viewing or changing the todo list, the plugin injects a reminder in the same turn and makes the manager `list` the todos and reconcile them with the real task state before finishing.
 - **The manager never does the work**: the preset only mounts read-only tools, and a tool guard enforces it. File edits and builds always go to engineers.
-- **Parallel engineers**: bounded by per-project and global workstations, per-engineer queues, and globally serialized resources (so front-end tests never fight over the browser). Main-workspace tasks (merge, deploy, docs) in the same project are mutually exclusive.
+- **Parallel engineers**: bounded by per-project and global workstations plus per-engineer queues. Main-workspace tasks (merge, deploy, docs) in the same project are mutually exclusive.
 - **Isolated worktrees**: one git worktree and branch per engineer; merge back with `paihuo_integrate` after review.
 - **Codex subagent mode**: switch the executor backend to `codex` and the plugin calls the local Codex CLI directly; the same Codex session can be reused and messaged. A 🤖 entry in the manager header shows each Codex subagent's session content.
 - **Visible roles**: sessions are color-coded in the list (manager = blue, engineer = yellow), and reports appear as a collapsible "📋 Paihuo report" card. While any of its engineers are working, the manager row shows a spinning LOADING icon.
@@ -70,6 +70,19 @@ Dispatching reuses existing sessions by default instead of creating one every ti
   - An explicit `engineer` is never blocked by kind; the receipt just notes a cross-pool choice (e.g. a test task attached to the session that wrote the code).
 - **Force a new session**: `reuse: "new"`. **Pin one**: `engineer` (see `paihuo_engineers` for ids, kinds and last-active times).
 - Reuse keeps the session's existing worktree/branch; receipts state "会话复用：<id> (same-project dev session, active 12 minutes ago)", and explain why nothing was reused when a new engineer is created.
+
+### Acceptance mode
+
+Settings → Paihuo → "Acceptance", or the `acceptance` config key:
+
+- **`self` (default): developer self-check.** The engineer runs the tests and writes commands plus results into `paihuo_report`; the manager decides from the report, `paihuo_task`, `paihuo_transcript` and its own read-only look at the diff.
+- **`independent`: independent engineer acceptance.** After a dev/general task reports success, the plugin dispatches a separate **acceptance task** (`kind: "test"`, in the test session pool):
+  - the brief carries the original task brief (where the acceptance criteria live), the executor's report (as a lead only), and the branch/commit;
+  - the acceptance engineer checks out the executor branch in its own worktree (`git checkout -B verify/<taskId> <branch>`), reads the diff, runs the tests itself, and checks every acceptance criterion;
+  - the verdict comes back through `paihuo_report`: `success` = passed, `failed` = not passed (which criterion, how to reproduce, what to fix), `blocked` = cannot verify;
+  - the verdict is written back to the source task (`acceptanceStatus`: pending/passed/failed) and reported to the manager with an explicit "can merge/deliver" or "do not merge/deliver yet";
+  - acceptance tasks never spawn further acceptance tasks, and merge tasks (`paihuo_integrate`) are excluded.
+- Independent acceptance costs one extra round trip (one more session turn) per dev task; it stops "the report says so" from counting as acceptance. Worth it for big tasks, not for tiny ones.
 
 ### User images travel with the task
 
@@ -134,7 +147,7 @@ The default executor backend is a session engineer (`engineerBackend: "session"`
   - `steer`: terminate the current CLI process and resume the same session with the message (failure is reported if the session cannot be resumed).
 - An idle Codex engineer accepts `paihuo_message` and runs a supplementary turn; the reply comes back as a “【Paihuo supplement】” message.
 - `paihuo_release` removes an idle Codex engineer from the plugin; the native Codex session file remains on disk.
-- Workstations, queues, `priority: "urgent"`, serialized resources, the main-workspace lock and worktrees still apply. In a worktree task, Codex must commit its changes to its branch; otherwise the task is reported as blocked.
+- Workstations, queues, `priority: "urgent"`, the main-workspace lock and worktrees still apply. In a worktree task, Codex must commit its changes to its branch; otherwise the task is reported as blocked.
 - `paihuo_integrate` also uses a Codex engineer in this mode, merging in the main workspace and running tests.
 
 ### Using it with IM
@@ -168,7 +181,7 @@ Manager (visible only in manager sessions):
 
 | Tool | Purpose |
 |---|---|
-| `paihuo_dispatch` | Dispatch a task; supports `kind` (`dev`/`test`/`general`, which session pool to reuse), `reuse` (`auto` by default, `"new"` forces a fresh session), `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name), and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
+| `paihuo_dispatch` | Dispatch a task; supports `kind` (`dev`/`test`/`general`, which session pool to reuse), `reuse` (`auto` by default, `"new"` forces a fresh session), `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
 | `paihuo_engineers` | Executors under this manager and their state (kind, last active time); Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
 | `paihuo_transcript` | Recent conversation and commands of one engineer, for judging what it is doing and whether it is stuck: session events for session engineers, CLI transcripts for Codex. Pass `engineer` or `task_id`; `limit` defaults to 12, `include_tools: false` hides tool activity |
@@ -202,7 +215,7 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugi
 | `maxEngineerQueue` | `6` | Per-engineer queue limit; new tasks are rejected when full |
 | `reuseActiveMinutes` | `180` | Session reuse window (minutes): only same-kind engineers active within it are reused; `0` = unlimited |
 | `worktree` | `true` | One git worktree and branch per engineer |
-| `serializedResources` | `['browser']` | Global resources held by one task at a time; add environment names such as `env127` so deploy/verify/seed tasks can serialize on that environment |
+| `acceptance` | `self` | Acceptance mode: `self` = the engineer runs the tests and reports; `independent` = an acceptance task is dispatched automatically after a dev task succeeds (see "Acceptance mode") |
 | `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` (not used in Codex mode) |
 | `managerExtraTools` | `[]` | Tool names allowed beyond the default families (including third-party MCP); tick them under Settings → Paihuo → “Manager tools” |
 | `managerDeniedTools` | `[]` | Default tools removed from the manager surface (e.g. `web_fetch`). `paihuo_*` tools are always available |
@@ -222,12 +235,10 @@ You can also edit the profile's `cordis.patch.yml` directly:
     workstationsPerProject: 2
     totalWorkstations: 4
     worktree: true
-    serializedResources:
-      - browser
-      - env127
+    acceptance: independent
 ```
 
-Tasks carrying `resources: ["env127"]` serialize globally; main-workspace tasks (merge/deploy/docs) are additionally serialized per project without any extra declaration.
+Main-workspace tasks (merge/deploy/docs) are serialized per project automatically, with no extra declaration.
 
 ## Manager tools
 
