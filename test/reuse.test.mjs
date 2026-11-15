@@ -192,6 +192,46 @@ test('kind 按标题与任务书推断：标题优先，标题无信号时看正
   }
 });
 
+test('显式 engineer 把任务挂到正在跑的会话后面排队，回执写明队列位置', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+
+  const first = await runDispatch(world, manager, { title: '实现登录页', brief: '改样式。' });
+  assert.equal(first.status, 'running');
+
+  const follow = await runDispatch(world, manager, {
+    title: '登录页补验证码样式',
+    brief: '同一文件的另一处小改。',
+    engineer: first.engineer,
+  });
+  assert.equal(follow.engineer, first.engineer, '显式 engineer 必须挂到原会话');
+  assert.equal(follow.status, 'queued');
+  assert.match(follow.text, /队列：已挂到 .* 后面（前面还有 1 个任务）/);
+  assert.deepEqual(world.stored.engineers[first.engineer].queue, [follow.task_id]);
+
+  // 第一轮结束后，挂着的任务在同一会话里接着开工。
+  await completeTurn(world, first.engineer);
+  assert.equal(world.stored.tasks[follow.task_id].status, 'running');
+  assert.equal(world.stored.tasks[follow.task_id].engineerId, first.engineer);
+});
+
+test('显式把测试任务塞进开发会话时只提醒、不拦截', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+
+  const dev = await runDispatch(world, manager, { title: '实现导出', brief: '加导出。' });
+  await completeTurn(world, dev.engineer);
+
+  const check = await runDispatch(world, manager, {
+    title: '测试导出',
+    brief: '验证导出按钮。',
+    kind: 'test',
+    engineer: dev.engineer,
+  });
+  assert.equal(check.engineer, dev.engineer, '显式指定时不做类型拦截');
+  assert.match(check.text, /该会话属于开发池，本任务是测试/);
+});
+
 test('paihuo_engineers 展示类型与最近活跃时间', async () => {
   const world = createWorld({ config: { worktree: false } });
   const manager = await boot(world);

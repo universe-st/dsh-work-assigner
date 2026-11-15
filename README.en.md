@@ -64,6 +64,10 @@ Dispatching reuses existing sessions by default instead of creating one every ti
   Pools never mix: a test task never lands in the session that just wrote the code, and a dev task never occupies a test session.
 - **Tests may queue**: when a test session is already running, new test tasks queue behind it (bounded by `maxEngineerQueue`) instead of spawning a session per verification.
 - **Kind detection**: the manager may pass `kind` explicitly. Otherwise it is inferred from the title (test/verify/regression → `test`; research/docs/summary/merge/deploy → `general`), then from the brief, and defaults to `dev`.
+- **The manager decides where a task goes** (no hard rule):
+  - Strongly related, small, or touching the same files → pass `engineer` to attach the task behind the previous task's session; if that session is still running the task **queues automatically**, keeping its working directory, branch and context — and avoiding conflicting parallel edits to the same file. The receipt states "队列：已挂到 … 后面（前面还有 N 个任务）".
+  - Independent, parallel-friendly work → omit `engineer` and let the default reuse/new path handle it.
+  - An explicit `engineer` is never blocked by kind; the receipt just notes a cross-pool choice (e.g. a test task attached to the session that wrote the code).
 - **Force a new session**: `reuse: "new"`. **Pin one**: `engineer` (see `paihuo_engineers` for ids, kinds and last-active times).
 - Reuse keeps the session's existing worktree/branch; receipts state "会话复用：<id> (same-project dev session, active 12 minutes ago)", and explain why nothing was reused when a new engineer is created.
 
