@@ -38,7 +38,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 ### 经理怎么工作
 
 1. 用 1–3 句总结目标与验收条件。
-2. 调用 `paihuo_dispatch` 派发，默认每次新建工程师；同一条工作线的后续才复用。**开发与测试必须用不同工程师**。
+2. 调用 `paihuo_dispatch` 派发。**默认尽量复用旧会话**（省去工程师重新加载上下文）：同项目、同类型、且最近 3 小时内活跃过的工程师直接接手新任务，没有这样的会话才新建；要干净上下文时传 `reuse: "new"`。
 3. 工具返回「已开工 / 排队第 N 位」，简短告知用户即可，本轮结束。
 4. 工程师完成后，经理收到以「【派活系统回报｜不是用户消息】」开头、以「【派活系统回报结束】」结尾的消息。
 5. 验收报告与分支，需要合并时用 `paihuo_integrate` 合入用户下发任务时所处的分支（或 `target_branch`）。
@@ -47,6 +47,25 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 8. 多步骤工作先用 `paihuo_todo` 建**待办**，开始/暂停/恢复/完成都通过同一个工具维护；右上角「待办」入口展示当前清单。每轮结束前若没有查看/修改待办，系统会注入 `【派活系统提醒】`，收到后先 `list`、对照 `paihuo_tasks` / `paihuo_engineers` 修正，再结束本轮。最多提醒 2 次，避免死循环。
 
 用户**不要**在工程师会话里对话；那是执行现场，点开只能看进度。
+
+### 会话复用
+
+派发默认**复用旧会话**，而不是每次新建：新建会话意味着工程师要从零加载一遍上下文，很贵也很慢。
+
+- **时间窗**：只复用最近 `reuseActiveMinutes`（默认 3 小时）内活跃过的会话；放久了、上下文已经冷掉的会话不复用，改为新建。正在跑任务的会话当然算活跃。
+- **按类型分池**：每条任务有一个 `kind`
+  | `kind` | 对应任务 | 复用池 |
+  | --- | --- | --- |
+  | `dev`（默认） | 改代码、改文档 | 只复用开发会话 |
+  | `test` | 测试、验证、回归 | 只复用测试会话 |
+  | `general` | 调研、出报告、合并验收、运维 | 只复用通用会话 |
+
+  三类会话互不串用：测试任务不会落到刚写代码的那个会话里，开发任务也不会占用测试会话。
+- **测试可以排队**：项目里已经有测试会话在跑时，新的测试任务直接排进它的队列（受 `maxEngineerQueue` 限制），不必为每次验证新建一个会话。
+- **怎么判定类型**：经理可以显式传 `kind`；不传时按标题推断（标题出现「测试/验证/回归」→ `test`；「调研/文档/整理/合并/部署」→ `general`），标题看不出来按正文推断，仍无信号就按 `dev` 处理。
+- **强制新会话**：传 `reuse: "new"`。
+- **指定会话**：传 `engineer`（`paihuo_engineers` 可查会话 id、类型与最近活跃时间），此时按该会话现有的工作目录与队列执行。
+- 复用会让新任务沿用该会话已有的 worktree/分支，回执里会写明「会话复用：<会话 id>（同项目开发会话，最近活跃 X 分钟前）」，没复用上也会写明原因（例如「开发会话最近都没有活跃过（时间窗 3 小时）」）。
 
 ### 图片随任务转发
 
@@ -105,7 +124,7 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 **行为**
 
 - 首轮执行 `codex exec --json`，保存返回的 `thread_id`；同一工程师再次派发或追加消息时用 `codex exec resume <thread_id>` 续接同一 Codex 会话。
-- 可以复用：`paihuo_dispatch` 传 `engineer` 或 `reuse: "auto"`；开发与测试仍然必须用不同工程师。
+- 复用规则与会话工程师一致（默认复用 3 小时内活跃过的同类 Codex 会话）；也可以显式传 `engineer` 指定某个 Codex 工程师。开发（`kind: "dev"`）与测试（`kind: "test"`）仍然是两套会话，互不串用。
 - 运行中的任务可以用 `paihuo_message`：
   - `queue`：当前 Codex 轮次结束后，在同一会话里追加一轮；
   - `steer`：中断当前 CLI 进程，然后用同一会话续接这条消息（若会话无法恢复会报告失败）。
@@ -145,8 +164,8 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 
 | 工具 | 说明 |
 |---|---|
-| `paihuo_dispatch` | 派发任务；支持 `engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
-| `paihuo_engineers` | 名下执行者与状态；Codex 工程师会显示 Codex session id，可复用 |
+| `paihuo_dispatch` | 派发任务；支持 `kind`（`dev`/`test`/`general`，决定复用哪类会话）、`reuse`（默认 `auto` 复用活跃会话，`"new"` 强制新建）、`engineer`、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`resources`（如 `["browser"]`、环境名）、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
+| `paihuo_engineers` | 名下执行者与状态（类型、最近活跃时间）；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
 | `paihuo_transcript` | 看某个工程师最近的对话与命令，判断它在做什么、是否卡住：会话工程师读会话事件，Codex 工程师读 CLI 转录。传 `engineer` 或 `task_id`；`limit` 默认 12，`include_tools: false` 只看双方发言 |
 | `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。空闲工程师的补充轮结束后会自动回报；Codex 模式下通过 resume 续接 |
@@ -177,6 +196,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `engineerModels` | `[]` | 可选工程师模型（`provider/model` + 适用范围），空 = 与经理同模型；Codex 模式下不生效 |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | 单项目 / 全局同时运行的工程师上限 |
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |
+| `reuseActiveMinutes` | `180` | 会话复用时间窗（分钟）：只复用这么久之内活跃过的同类型工程师会话；`0` = 不限时间窗 |
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
 | `serializedResources` | `['browser']` | 全局串行资源，同一资源同时只跑一个任务；可加入 `env127` 之类的共享环境名，发布/验证/造数任务带上同名 `resources` 即可互斥 |
 | `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设（Codex 模式不适用） |

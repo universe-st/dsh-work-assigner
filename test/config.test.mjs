@@ -13,6 +13,8 @@ test('defaults are complete and frozen', () => {
   assert.equal(config.codexSandbox, 'workspace-write');
   assert.equal(config.codexBypassApprovals, false);
   assert.equal(config.codexCompletionGraceMs, 120_000);
+  assert.equal(config.maxEngineerQueue, 6);
+  assert.equal(config.reuseActiveMinutes, 180);
   assert.equal(config.workstationsPerProject, 2);
   assert.equal(config.totalWorkstations, 4);
   assert.equal(config.worktree, true);
@@ -63,6 +65,14 @@ test('codex completion grace accepts any non-negative integer', () => {
   assert.throws(() => resolveConfig({ codexCompletionGraceMs: -1 }), /codexCompletionGraceMs/);
   assert.throws(() => resolveConfig({ codexCompletionGraceMs: 1.5 }), /codexCompletionGraceMs/);
   assert.throws(() => resolveConfig({ codexCompletionGraceMs: '2000' }), /codexCompletionGraceMs/);
+});
+
+test('reuse window accepts 0 (unlimited) and rejects bad numbers', () => {
+  assert.equal(resolveConfig({ reuseActiveMinutes: 0 }).reuseActiveMinutes, 0);
+  assert.equal(resolveConfig({ reuseActiveMinutes: 90 }).reuseActiveMinutes, 90);
+  assert.throws(() => resolveConfig({ reuseActiveMinutes: -1 }), /reuseActiveMinutes/);
+  assert.throws(() => resolveConfig({ reuseActiveMinutes: 1.5 }), /reuseActiveMinutes/);
+  assert.throws(() => resolveConfig({ reuseActiveMinutes: '180' }), /reuseActiveMinutes/);
 });
 
 test('engineer models are normalized', () => {

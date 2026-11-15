@@ -38,7 +38,7 @@ A session created from the preset switches back to the default preset (normally 
 ### How the manager works
 
 1. Summarize the goal and acceptance criteria in 1–3 sentences.
-2. Call `paihuo_dispatch`, which creates a new engineer by default; reuse only for a follow-up on the same line of work. **Development and testing must use different engineers.**
+2. Call `paihuo_dispatch`. It **reuses an existing session by default** (no context reload): a same-project, same-kind engineer active within the last 3 hours takes the new task; otherwise a new engineer is created. Pass `reuse: "new"` when you want a clean context.
 3. The tool returns "started / queued at position N"; tell the user briefly and end the turn.
 4. When an engineer finishes, the manager receives a message wrapped in "【Paihuo system report — not a user message】" … "【end of Paihuo report】".
 5. Review the report and branch, then use `paihuo_integrate` to merge into the branch that was checked out when the task was dispatched (or `target_branch`).
@@ -47,6 +47,25 @@ A session created from the preset switches back to the default preset (normally 
 8. For multi-step work, create **todos** with `paihuo_todo`; start/pause/resume/complete them through the same tool. The top-right todo entry shows the current list. If a turn ends without touching the todo list, the plugin injects a "【Paihuo system reminder】"; call `list`, reconcile with `paihuo_tasks` / `paihuo_engineers`, then end the turn. At most two reminders per turn.
 
 Do **not** chat inside engineer sessions — they are the work site; open one only to watch progress.
+
+### Session reuse
+
+Dispatching reuses existing sessions by default instead of creating one every time: a fresh session forces the engineer to load its whole context again, which is slow and expensive.
+
+- **Window**: only sessions active within `reuseActiveMinutes` (180 by default) are reused; older, cold sessions are skipped and a new engineer is created. A running session always counts as active.
+- **Pools by kind**: every task has a `kind`
+
+  | `kind` | Tasks | Reuse pool |
+  | --- | --- | --- |
+  | `dev` (default) | code and doc changes | dev sessions only |
+  | `test` | testing, verification, regression | test sessions only |
+  | `general` | research, reports, merge/integration, ops | general sessions only |
+
+  Pools never mix: a test task never lands in the session that just wrote the code, and a dev task never occupies a test session.
+- **Tests may queue**: when a test session is already running, new test tasks queue behind it (bounded by `maxEngineerQueue`) instead of spawning a session per verification.
+- **Kind detection**: the manager may pass `kind` explicitly. Otherwise it is inferred from the title (test/verify/regression → `test`; research/docs/summary/merge/deploy → `general`), then from the brief, and defaults to `dev`.
+- **Force a new session**: `reuse: "new"`. **Pin one**: `engineer` (see `paihuo_engineers` for ids, kinds and last-active times).
+- Reuse keeps the session's existing worktree/branch; receipts state "会话复用：<id> (same-project dev session, active 12 minutes ago)", and explain why nothing was reused when a new engineer is created.
 
 ### User images travel with the task
 
@@ -105,7 +124,7 @@ The default executor backend is a session engineer (`engineerBackend: "session"`
 **Behavior**
 
 - The first run uses `codex exec --json` and stores the returned `thread_id`; further tasks or messages for the same engineer use `codex exec resume <thread_id>`.
-- Reuse works: pass `engineer` or `reuse: "auto"` to `paihuo_dispatch`. Development and testing still need different engineers.
+- Reuse follows the same rules as session engineers (by default a same-kind Codex session active within 3 hours); you can also pin one with `engineer`. `dev` and `test` kinds still never share a session.
 - `paihuo_message` on a running task:
   - `queue`: after the current Codex turn, append another turn in the same session;
   - `steer`: terminate the current CLI process and resume the same session with the message (failure is reported if the session cannot be resumed).
@@ -145,8 +164,8 @@ Manager (visible only in manager sessions):
 
 | Tool | Purpose |
 |---|---|
-| `paihuo_dispatch` | Dispatch a task; supports `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name), and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
-| `paihuo_engineers` | Executors under this manager and their state; Codex engineers show their Codex session id and are reusable |
+| `paihuo_dispatch` | Dispatch a task; supports `kind` (`dev`/`test`/`general`, which session pool to reuse), `reuse` (`auto` by default, `"new"` forces a fresh session), `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, `resources` (e.g. `["browser"]`, an environment name), and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
+| `paihuo_engineers` | Executors under this manager and their state (kind, last active time); Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
 | `paihuo_transcript` | Recent conversation and commands of one engineer, for judging what it is doing and whether it is stuck: session events for session engineers, CLI transcripts for Codex. Pass `engineer` or `task_id`; `limit` defaults to 12, `include_tools: false` hides tool activity |
 | `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. An idle engineer's supplementary turn reports back automatically; Codex mode resumes the same session |
@@ -177,6 +196,7 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugi
 | `engineerModels` | `[]` | Selectable engineer models (`provider/model` + scope); empty = same model as the manager; ignored in Codex mode |
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | Concurrent engineer limit per project / overall |
 | `maxEngineerQueue` | `6` | Per-engineer queue limit; new tasks are rejected when full |
+| `reuseActiveMinutes` | `180` | Session reuse window (minutes): only same-kind engineers active within it are reused; `0` = unlimited |
 | `worktree` | `true` | One git worktree and branch per engineer |
 | `serializedResources` | `['browser']` | Global resources held by one task at a time; add environment names such as `env127` so deploy/verify/seed tasks can serialize on that environment |
 | `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` (not used in Codex mode) |
