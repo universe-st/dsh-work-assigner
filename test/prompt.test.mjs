@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildCodexTaskPrompt, buildManagerSection, buildReportMessage, buildTodoCheckReminder } from '../lib/prompt.js';
+import {
+  buildAcceptanceBrief,
+  buildCodexSupplementMessage,
+  buildCodexTaskPrompt,
+  buildManagerSection,
+  buildReportMessage,
+  buildSessionSupplementMessage,
+  buildTodoCheckReminder,
+} from '../lib/prompt.js';
 
 function fakeRuntime() {
   return {
@@ -79,7 +87,7 @@ test('manager prompt section is static while task state changes', () => {
   assert.match(first, /现状 \+ 不要做什么/);
 });
 
-test('completion report is compact and points at paihuo_task', () => {
+test('completion report carries the full summary without truncation', () => {
   const task = {
     taskId: 't7',
     title: '长报告',
@@ -88,19 +96,24 @@ test('completion report is compact and points at paihuo_task', () => {
     baseBranch: 'main',
     report: {
       outcome: 'success',
-      summary: '摘'.repeat(5000),
+      summary: `## 结论\n\n已完成。\n${'摘'.repeat(5000)}`,
       changes: Array.from({ length: 20 }, (_, index) => `signage-frontend/src/views/very-long-file-${index}.vue`),
-      tests: '测'.repeat(3000),
+      tests: `npm test\n${'测'.repeat(3000)}`,
       blockers: '阻'.repeat(3000),
     },
   };
   const text = buildReportMessage(task, { sessionId: 'session-e1', worktree: { branch: 'paihuo/t7' } });
 
-  // 回报会永久留在经理上下文里，必须保持紧凑（修复前最长 9k 字符）。
-  assert.ok(text.length < 2200, `report too long: ${text.length}`);
+  // 报告是经理做决定的依据：整段原样带来，不能出现「…」截断或改成一行。
+  assert.ok(text.includes('摘'.repeat(5000)), 'summary must be carried in full');
+  assert.ok(text.includes('测'.repeat(3000)), 'tests must be carried in full');
+  assert.ok(text.includes('阻'.repeat(3000)), 'blockers must be carried in full');
+  assert.ok(text.includes('very-long-file-19.vue'), 'every changed file must be listed');
+  assert.match(text, /^## 结论$/m, 'markdown structure must survive');
+  assert.doesNotMatch(text, /…/);
+  assert.doesNotMatch(text, /等 20 项/);
   assert.match(text, /paihuo_task/);
   assert.match(text, /"task_id": "t7"/);
-  assert.match(text, /等 20 项/);
 });
 
 test('report does not suggest integrating a main-workspace commit', () => {
@@ -174,6 +187,38 @@ test('codex report keeps the client card contract and skips unreported wording',
   assert.match(text, /- 后端：Codex 工程师（CLI）/);
   assert.doesNotMatch(text, /未显式调用报告工具/);
   assert.match(text, /paihuo_integrate/);
+});
+
+test('codex supplement reply is carried in full', () => {
+  const body = `## 补充说明\n${'补'.repeat(4000)}`;
+  const codex = buildCodexSupplementMessage({ sessionId: 'codex-e1' }, body);
+  assert.ok(codex.includes('补'.repeat(4000)));
+  assert.doesNotMatch(codex, /…/);
+  const session = buildSessionSupplementMessage({ sessionId: 'session-e1' }, body, 'completed');
+  assert.ok(session.includes('补'.repeat(4000)));
+  assert.doesNotMatch(session, /…/);
+});
+
+test('acceptance brief quotes the executor report in full', () => {
+  const task = {
+    taskId: 't9',
+    title: '长报告',
+    projectPath: 'D:\\Workspace\\proj',
+    baseBranch: 'main',
+    brief: '改 README。',
+    worktree: { branch: 'paihuo/t9' },
+    report: {
+      outcome: 'success',
+      summary: `## 结论\n${'摘'.repeat(3000)}`,
+      changes: Array.from({ length: 30 }, (_, index) => `src/file-${index}.js`),
+      tests: `npm test\n${'测'.repeat(2000)}`,
+    },
+  };
+  const text = buildAcceptanceBrief(task);
+  assert.ok(text.includes('摘'.repeat(3000)));
+  assert.ok(text.includes('测'.repeat(2000)));
+  assert.ok(text.includes('src/file-29.js'));
+  assert.doesNotMatch(text, /…/);
 });
 
 test('todo check reminder tells the manager to list and reconcile', () => {

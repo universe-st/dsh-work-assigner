@@ -13,6 +13,7 @@
  *   常驻子进程攥住 stdio、父进程已经报完却收不到 close 的情形）。
  * - PAIHUO_FAKE_ORPHAN=<n>：回报 turn.completed 后派生一个存活 n 毫秒的
  *   孙子进程（stdio 继承），自己立刻退出，复现「进程已退、stdio 未关」。
+ * - PAIHUO_FAKE_LONG=<n>：最终回答追加 n 个字符的正文，用来验证报告不被截断。
  */
 
 import { appendFileSync, existsSync, statSync } from 'node:fs';
@@ -128,12 +129,17 @@ process.stdout.write(`${JSON.stringify({
   type: 'item.completed',
   item: { id: 'item_1', type: 'command_execution', command: 'echo fake', aggregated_output: 'fake output\n', exit_code: 0, status: 'completed' },
 })}\n`);
+const longMatch = /PAIHUO_FAKE_LONG=(\d+)/.exec(prompt);
+const long = longMatch === null ? 0 : Number(longMatch[1]);
 const text = isResume
   ? `FAKE_CODEX_RESUMED ${prompt.slice(0, 120)}`
   : `FAKE_CODEX_OK ${prompt.slice(0, 120)}`;
+const answer = long > 0
+  ? `${text}\n\n## 完整报告\n\n${'报'.repeat(long)}`
+  : text;
 process.stdout.write(`${JSON.stringify({
   type: 'item.completed',
-  item: { id: 'item_2', type: 'agent_message', text },
+  item: { id: 'item_2', type: 'agent_message', text: answer },
 })}\n`);
 process.stdout.write(`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
 

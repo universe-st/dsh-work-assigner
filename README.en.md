@@ -40,7 +40,7 @@ A session created from the preset switches back to the default preset (normally 
 1. Summarize the goal and acceptance criteria in 1–3 sentences.
 2. Call `paihuo_dispatch`. It **reuses an existing session by default** (no context reload): a same-project, same-kind engineer active within the last 3 hours takes the new task; otherwise a new engineer is created. Pass `reuse: "new"` when you want a clean context.
 3. The tool returns "started / queued at position N"; tell the user briefly and end the turn.
-4. When an engineer finishes, the manager receives a message wrapped in "【Paihuo system report — not a user message】" … "【end of Paihuo report】".
+4. When an engineer finishes, the manager receives a message wrapped in "【Paihuo system report — not a user message】" … "【end of Paihuo report】". The report body is delivered **in full, never truncated** (Codex's final answer arrives verbatim, including headings, tables and code blocks); the manager must read all of it before deciding. The tradeoff: reports stay in the manager context forever, so long reports cost noticeably more tokens.
 5. Review the report and branch, then use `paihuo_integrate` to merge into the branch that was checked out when the task was dispatched (or `target_branch`).
 6. Use `paihuo_release` to turn an engineer session back into a normal session once it is no longer needed.
 7. When you need a confirmation, choice, or missing detail, use `ask_user_question`. The manager preset runs in timed mode: after one second the question moves to the top-right **question inbox**, so the manager turn does not stay blocked. Pass `timeout: -1` only when nothing can proceed without the answer.
@@ -195,7 +195,7 @@ The manager preset also keeps `ask_user_question` with `mode: timed` / `timeout:
 
 Engineer: `paihuo_report` (`outcome: success | failed | blocked`, optionally `branch` / `commit`).
 
-Codex mode has no `paihuo_report`: Codex's final answer is the report; the plugin records it and wakes the manager, and `paihuo_message` resumes the same session.
+Codex mode has no `paihuo_report`: Codex's final answer is the report. The plugin records it **verbatim and in full** and wakes the manager (no truncation; long reports make the context larger — completeness over cost); `paihuo_message` resumes the same session.
 
 ## Configuration
 
@@ -260,7 +260,7 @@ The manager sees read-only tools, memory tools (`memory_*`) and IM tools (`dsh_i
 ## Development and tests
 
 ```powershell
-npm test    # 116 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
+npm test    # 152 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
 ```
 
 `test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, a fake Codex CLI (exec, resume, images via `-i`, failure, cancellation, worktree, model catalog), and user-image forwarding.

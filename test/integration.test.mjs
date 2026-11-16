@@ -667,6 +667,36 @@ test('codex mode dispatches a CLI engineer and wakes the manager', async () => {
   }
 });
 
+test('codex final answer reaches the manager untruncated', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({
+      config: { engineerBackend: 'codex', worktree: false },
+    });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, {
+      title: '长报告',
+      brief: '按小节写完整报告，不要压缩。PAIHUO_FAKE_LONG=5000',
+    });
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'done');
+
+    const task = world.stored.tasks[result.task_id];
+    assert.equal(task.report.outcome, 'success');
+    assert.ok(task.report.summary.length > 5000, '台账里必须是完整回答');
+
+    const report = world.prompts.find(
+      (entry) => entry.sessionId === manager.id && entry.text.includes('【派活系统回报'),
+    );
+    assert.ok(report, 'manager must receive the codex completion report');
+    assert.ok(report.text.includes('报'.repeat(5000)), '经理收到的回报不能被截断');
+    assert.doesNotMatch(report.text, /…/);
+  } finally {
+    log.cleanup();
+  }
+});
+
 test('codex turns settle after the completion grace even if the CLI never exits', async () => {
   const log = beginCodexLog();
   try {
