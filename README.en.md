@@ -6,13 +6,14 @@ English | **[简体中文](README.md)**
 
 - **Non-blocking manager**: dispatching returns immediately and the turn ends, so the user can keep talking.
 - **Forced todo check**: if a manager turn ends without viewing or changing the todo list, the plugin injects a reminder in the same turn and makes the manager `list` the todos and reconcile them with the real task state before finishing.
-- **The manager never does the work**: the preset only mounts read-only tools, and a tool guard enforces it. File edits and builds always go to engineers.
+- **The manager never does the work**: the preset mounts read-only tools only (plus the question inbox, skills and scheduled tasks), never a write tool, and a tool guard enforces it. File edits and builds always go to engineers.
 - **Parallel engineers**: bounded by per-project and global workstations plus per-engineer queues. Main-workspace tasks (merge, deploy, docs) in the same project are mutually exclusive.
 - **Isolated worktrees**: one git worktree and branch per engineer; merge back with `paihuo_integrate` after review.
 - **Codex subagent mode**: switch the executor backend to `codex` and the plugin calls the local Codex CLI directly; the same Codex session can be reused and messaged. A 🤖 entry in the manager header shows each Codex subagent's session content.
 - **Visible roles**: sessions are color-coded in the list (manager = blue, engineer = yellow), and reports appear as a collapsible "📋 Paihuo report" card. While any of its engineers are working, the manager row shows a spinning LOADING icon.
 - **Question inbox**: manager questions become non-blocking after one second and move to a top-right inbox with a red count badge; answering in the popup resumes the manager's task.
 - **Todos**: the manager maintains a persistent list with add/start/pause/resume/update/complete actions; the top-right panel shows the list and survives turns and reloads.
+- **Scheduled wake-ups**: when Codex hits its usage limit, the manager can schedule a one-shot task (`schedule_*`) so the Host wakes the session and the work continues after the limit resets — no polling and no idle waiting.
 - **Settings page**: Settings → Paihuo, or the "Configure" action on the `paihuo` row in the plugin page. Saved changes apply immediately, no restart.
 
 ## Install
@@ -99,6 +100,18 @@ The manager only talks; the engineer is the one who has to match the screenshot.
 - **Question inbox**: the 💬 entry in the manager header. The red count is the number of unanswered questions in the `userQuestions` projection. The popup groups questions by call and supports preset options, custom answers, and explicit skips; submitting sends the answer back to the manager as an `answer_to_pending_question` user message. Questions still waiting in the foreground (`open`) can be opened in the built-in question panel.
 - **Todos**: the 🗒️ entry in the manager header. The count is the number of open todos. The manager maintains them with `paihuo_todo`; statuses are `pending`, `in_progress`, `paused`, and `completed`. The panel is read-only and grouped by status, with completed items collapsible. Todos are per manager session, survive page reloads and plugin reloads, and stay hidden while the session is not a manager; re-entering manager mode brings them back.
 - **Forced check**: if a manager turn ends without a successful `paihuo_todo` call, the plugin uses `agent/turn-stopping` to inject a "【Paihuo system reminder】" in the same turn, asking the manager to list and reconcile the todos. At most two reminders per turn, then the turn is allowed to end with a warning. The first reply has already been sent; the follow-up appears in the same turn.
+
+### Waiting with scheduled tasks
+
+Some waits should not be polls. When Codex hits its usage limit, the limit often takes tens of minutes or hours to reset: retrying keeps failing, and making the user wait silently tells them nothing about when work resumes.
+
+- The manager preset mounts `schedule_*` (`schedule_create` / `schedule_list` / `schedule_view` / `schedule_edit`), so the manager can write "wait, then continue" as a Host scheduled task that delivers to this session (`target: "this_session"`).
+- Typical flow: a Codex report comes back failed with a usage-limit diagnostic in its blockers (usage limit / rate limit / try again at / resets at) → the manager schedules a one-shot task at the reset time from the diagnostic (or estimates, e.g. one hour, when the diagnostic gives none) with an rrule such as `DTSTART;TZID=Asia/Shanghai:20260302T143000` and `RRULE:FREQ=DAILY;COUNT=1`, adding a 1–3 minute margin.
+- When it fires, the Host delivers `prompt` into the manager session as a message (`this_session` waits for the previous turn, so it does not interrupt running work). The prompt must be self-contained: task id, engineer id, what the task was, the acceptance bar, and what to do if it still fails.
+- The manager then tells the user when work resumes, pauses the matching todo, and prefers `paihuo_message` to continue the same Codex engineer (its session keeps the context and is cheaper than re-dispatching). Reschedule with `schedule_edit` on `rrule`; delete with `action: "delete"` when the wait is no longer wanted.
+- These are ordinary DSH scheduled tasks: they appear on the Automation tasks page, where the user can pause, run now, or delete them — not a private alarm inside the session.
+- Scope caution: `schedule_list` / `schedule_edit` are Host-wide and reach **every** session's tasks. The manager prompt tells it to touch only the tasks it created (their titles carry the task id) and never pause, reschedule, or delete the user's own automation. To tighten further, uncheck `schedule_edit` under "Manager tools" and keep only `schedule_create` / `schedule_list`.
+- To keep the manager from scheduling anything, uncheck the `schedule_*` group under Settings → Paihuo → "Manager tools" (recorded in `managerDeniedTools`).
 
 ### Worktree rules
 
@@ -190,8 +203,9 @@ Manager (visible only in manager sessions):
 | `paihuo_integrate` | Dispatch an executor to merge a finished task's branch into the target branch, resolve conflicts and run tests; `notes` appends merge-specific verification scope; in Codex mode Codex performs the merge |
 | `paihuo_release` | Return an idle session engineer to a normal session; Codex engineers are removed from the plugin |
 | `paihuo_todo` | Maintain manager todos: `action: add/update/start/pause/resume/complete/remove/clear/list`; manager-only; a turn without a check is reminded |
+| `schedule_*` | DSH's scheduled-task tools (`schedule_create` / `schedule_list` / `schedule_view` / `schedule_edit`): the manager schedules a one-shot task that wakes this session to wait out a Codex limit or an external state; the tasks also appear on the Automation tasks page |
 
-The manager preset also keeps `ask_user_question` with `mode: timed` / `timeout: 1`. The built-in `todo_write` is removed from that preset (it resets every turn and has no paused state), so `paihuo_todo` owns the list.
+The manager preset also keeps `ask_user_question` with `mode: timed` / `timeout: 1`, plus `schedule_*` and `time-context` (a scheduled task needs local time to compute `DTSTART`). The built-in `todo_write` is removed from that preset (it resets every turn and has no paused state), so `paihuo_todo` owns the list.
 
 Engineer: `paihuo_report` (`outcome: success | failed | blocked`, optionally `branch` / `commit`).
 
@@ -242,9 +256,9 @@ Main-workspace tasks (merge/deploy/docs) are serialized per project automaticall
 
 ## Manager tools
 
-The manager sees read-only tools, memory tools (`memory_*`) and IM tools (`dsh_im_*`) by default. Open Settings → Paihuo → “Manager tools” for a standalone window listing **every available tool** (third-party MCP included, plus the tools inherited by the current manager session); tick to allow, untick to disable:
+The manager sees read-only tools, memory tools (`memory_*`), IM tools (`dsh_im_*`) and scheduled-task tools (`schedule_*`) by default. Open Settings → Paihuo → “Manager tools” for a standalone window listing **every available tool** (third-party MCP included, plus the tools inherited by the current manager session); tick to allow, untick to disable:
 
-- Unticking a default family (read-only / memory / IM) writes `managerDeniedTools`; ticking any other tool writes `managerExtraTools`.
+- Unticking a default family (read-only / memory / IM / scheduled tasks) writes `managerDeniedTools`; ticking any other tool writes `managerExtraTools`.
 - Paihuo tools (`paihuo_*`) are always mounted and cannot be disabled; putting them in either config field is rejected.
 - Saving rebuilds existing manager scopes immediately — no new session needed; both the `tools.restrict` allow/deny lists and the tool guard follow the new config.
 - Only the inherited surface is affected; tools registered inside the manager scope (`paihuo_*`) are untouched. A tool missing from the list was not registered globally or on the preset ancestors.
@@ -260,7 +274,7 @@ The manager sees read-only tools, memory tools (`memory_*`) and IM tools (`dsh_i
 ## Development and tests
 
 ```powershell
-npm test    # 152 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
+npm test    # 153 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
 ```
 
 `test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, a fake Codex CLI (exec, resume, images via `-i`, failure, cancellation, worktree, model catalog), and user-image forwarding.
@@ -280,7 +294,8 @@ npm test    # 152 cases: pure policy, state, todo state machine and forced todo 
 - The forced todo check relies on DSH's `agent/turn-stopping`; on older hosts it silently does nothing and the rest of the plugin keeps working.
 - The check runs after the reply: the first reply has already been sent, and the follow-up check adds a short message in the same turn. After two ignored reminders the turn is allowed to end and a warning is logged. The check guarantees the manager looks and can fix the list, not that the list is necessarily correct.
 - Worktrees and branches of merged tasks are not deleted automatically; clean them up manually when needed.
-- The manager tool surface is narrowed to the read-only + memory (`memory_*`) + IM (`dsh_im_*`) whitelist plus `paihuo_*`, so profile-level MCP tools (e.g. browser) stay out of the manager prompt; the guard still rejects any call outside the whitelist, including tools registered after the scope is installed.
+- The manager tool surface is narrowed to the read-only + memory (`memory_*`) + IM (`dsh_im_*`) + scheduled-task (`schedule_*`) whitelist plus `paihuo_*`, so profile-level MCP tools (e.g. browser) stay out of the manager prompt; the guard still rejects any call outside the whitelist, including tools registered after the scope is installed.
+- Scheduled tasks need both the `ctx.schedule` service in the base composition (included in Web/Desktop) and `@deepseek-ai/dsh-tool-schedule` mounted by the manager preset; without either, the manager simply does not see `schedule_*` and nothing else changes.
 - The whole `memory_*` family from the meow-memory plugin is allowed: the memory database lives under `$DSH_HOME` and is not a workspace change, so the manager can call `memory_remember` / `memory_update` directly and idle-triggered dream consolidation actually persists.
 - The manager prompt section stays static (no live workstation counts, engineer list, or todo count) so re-assembling the system prompt on every step cannot invalidate the whole context cache; use `paihuo_engineers` / `paihuo_tasks` for live state.
 - The question inbox only sees questions produced by timed `ask_user_question`; questions asked before the preset switched to timed mode are not in the projection. An `open` question with `timeout: -1` must be answered in the built-in question panel; the inbox only offers to open it.

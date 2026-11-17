@@ -85,6 +85,14 @@ test('manager prompt section is static while task state changes', () => {
   assert.match(first, /不要出现「用户已核实/);
   assert.match(first, /一条命令或一次查询/);
   assert.match(first, /现状 \+ 不要做什么/);
+  // 等待要写成真正的定时任务：Codex 限额时排一次性唤醒，而不是轮询或干等。
+  assert.match(first, /schedule_create/);
+  assert.match(first, /this_session/);
+  assert.match(first, /RRULE:FREQ=DAILY;COUNT=1/);
+  assert.match(first, /用量限额/);
+  assert.match(first, /paihuo_message/);
+  // 定时任务是 Host 级的：经理不能把用户自己建的自动化任务一起改掉。
+  assert.match(first, /所有会话/);
 });
 
 test('completion report carries the full summary without truncation', () => {

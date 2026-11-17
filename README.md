@@ -6,13 +6,14 @@
 
 - **经理不阻塞**：派发工具立即返回，本轮直接结束，用户可以接着说下一个需求。
 - **待办强制核对**：每轮结束前若没有查看/修改待办，系统会在同一轮内强制提醒经理先 `list`、对照真实任务状态修正，再结束；避免回复用户时清单已经过期。
-- **经理不动手**：预制预设只挂只读工具，插件再用工具守卫兜底；改文件、跑构建一律交给工程师。
+- **经理不动手**：预制预设只挂只读工具（外加问题表、技能与定时任务），不挂任何写入工具，插件再用工具守卫兜底；改文件、跑构建一律交给工程师。
 - **工程师并行**：受工位、单工程师排队两层约束；同一项目的主工作区任务（合并、发布、改文档）自动互斥。
 - **独立 worktree**：每个工程师一个分支，改动隔离；验收后用 `paihuo_integrate` 合回基线分支并跑测试。
 - **Codex 子代理模式**：把执行者后端切换为 `codex` 后，插件直接调用本机 Codex CLI 执行任务；同一 Codex 会话可以复用、追加消息。经理会话右上角有 🤖 入口，可查看每个 Codex 子代理的会话内容。
 - **角色可见**：会话列表按角色着色（经理蓝底白字、工程师黄底黑字），回报在聊天里显示为「📋 派活回报」卡片。经理名下有工程师正在执行时，经理会话左侧会显示旋转的 LOADING 图标。
 - **问题表**：经理提问默认 1 秒后转入右上角「问题表」，红圈数字是待回答的问题数；用户点开弹窗回答，经理继续处理该任务。
 - **待办事项**：经理用 `paihuo_todo` 添加/开始/暂停/恢复/修改/完成待办，入口与进度显示在会话右上角，跨轮次与刷新保留。
+- **定时任务**：Codex 撞上用量限额时，经理可以直接排一个一次性定时任务（`schedule_*`），到点由 Host 唤醒自己继续派活，不用轮询、也不用用户干等。
 - **配置页**：Settings → 派活，或插件页 `paihuo` 行的「配置」，保存即生效，无需重启。
 
 ## 安装
@@ -99,6 +100,18 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 - **问题表**：经理会话右上角的 💬 图标，红圈数字是 `userQuestions` 投影里仍未回答的问题数。弹窗按提问批次分组，可选预设选项、填写自定义答案或跳过；提交后由 Host 把回答作为 `answer_to_pending_question` 用户消息送回经理会话。仍在等待前台回答（`open`）的问题可以直接打开 DSH 自带的问答面板。
 - **待办**：经理会话右上角的 🗒️ 图标，数字是未完成待办数。经理通过 `paihuo_todo` 维护；状态为 `pending`（待办）、`in_progress`（进行中）、`paused`（暂停）、`completed`（已完成）。面板是只读的，按状态分组，已完成项可折叠。待办按经理会话隔离，页面刷新与插件重载后保留；`/paihuo off` 后入口隐藏，再进入经理模式仍可见。
 - **强制核对**：每个经理轮次结束前，如果本轮没有一次成功的 `paihuo_todo` 调用，插件会通过 `agent/turn-stopping` 在同一轮内注入 `【派活系统提醒】`，要求经理先 `list`、再按真实任务状态更新；最多提醒 2 次，之后放行并记录 warning。第一次回复已经发出，核对后的补充回复会追加在同一轮里。
+
+### 等待与定时任务
+
+有些等待不该靠轮询：Codex 撞上用量限额时，限额常常几十分钟到几小时才恢复，反复重试只是连续撞墙，让用户干等又说不清什么时候能继续。
+
+- 经理预设挂了 `schedule_*`（`schedule_create` / `schedule_list` / `schedule_view` / `schedule_edit`），经理可以把「等一段时间再继续」写成一条 Host 定时任务，投递目标选本会话（`target: "this_session"`）。
+- 典型流程：Codex 回报失败的「阻塞」里带着用量限额诊断（usage limit / rate limit / try again at / resets at）→ 经理按诊断里的恢复时间（没写时间就按经验估，例如 1 小时）排一次性任务，`rrule` 形如 `DTSTART;TZID=Asia/Shanghai:20260302T143000` 换行 `RRULE:FREQ=DAILY;COUNT=1`，取恢复时间再留 1–3 分钟余量。
+- 到点后 Host 把 `prompt` 作为一条消息投递进经理会话（`target: "this_session"` 会等上一轮结束，不会打断正在跑的工作），经理按里面自包含的指令继续；首选 `paihuo_message` 续接原来的 Codex 工程师（同一 Codex 会话有上下文，比重派省 token）。
+- 排好之后经理会直接告诉你「几点自动继续」；对应的待办先标 `pause`，唤醒后 `resume`。改期用 `schedule_edit` 改 `rrule`，不用等了就 `action: "delete"` 删掉。
+- 这些任务就是 DSH 的「自动化任务」，会出现在侧栏的自动化任务页，用户也可以在那里暂停、立即运行或删除；不是会话私有的闹钟。
+- 注意权限边界：`schedule_list` / `schedule_edit` 是 Host 级的，能看到并改动**所有会话**的定时任务。经理提示词要求它只动自己排的那几条（title 带任务号），不会去改用户自己建的自动化任务；真要收紧，可以在「经理工具放行」里取消 `schedule_edit`、只留 `schedule_create` / `schedule_list`。
+- 想让经理完全不排定时任务时，在 设置 → 派活 →「经理工具放行」里取消 `schedule_*` 分组即可（写进 `managerDeniedTools`）。
 
 ### worktree 规则
 
@@ -190,8 +203,9 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 | `paihuo_integrate` | 派执行者把已完成任务的分支合入目标分支，处理冲突并跑测试；`notes` 可写本次合并的额外核验/测试范围；Codex 模式下由 Codex 执行 |
 | `paihuo_release` | 把空闲的会话工程师恢复成普通会话；Codex 工程师会被移出插件 |
 | `paihuo_todo` | 维护经理待办：`action: add/update/start/pause/resume/complete/remove/clear/list`；只对经理可见；每轮未核对会被系统提醒 |
+| `schedule_*` | DSH 自带的定时任务工具（`schedule_create` / `schedule_list` / `schedule_view` / `schedule_edit`）：经理排一次性任务，到点由 Host 唤醒本会话，用于等 Codex 限额、等外部状态；对应任务也出现在「自动化任务」页 |
 
-经理预设还保留了 `ask_user_question`，并使用 `mode: timed` / `timeout: 1`；内置 `todo_write` 已从经理预设移除（每轮清空且没有暂停，改由 `paihuo_todo` 承担）。
+经理预设还保留了 `ask_user_question`（`mode: timed` / `timeout: 1`）、`schedule_*` 与 `time-context`（定时任务要按本地时间算 `DTSTART`）；内置 `todo_write` 已从经理预设移除（每轮清空且没有暂停，改由 `paihuo_todo` 承担）。
 
 工程师：`paihuo_report`（`outcome: success | failed | blocked`，可附 `branch` / `commit`）。
 
@@ -242,9 +256,9 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 
 ## 经理工具放行
 
-经理默认只能看到只读工具、记忆工具（`memory_*`）与 IM 工具（`dsh_im_*`）。打开 设置 → 派活 →「经理工具放行」，会在独立窗口里列出当前可用的**全部工具**（含第三方 MCP、当前经理继承面的工具），勾选即放行、取消即禁用：
+经理默认只能看到只读工具、记忆工具（`memory_*`）、IM 工具（`dsh_im_*`）与定时任务工具（`schedule_*`）。打开 设置 → 派活 →「经理工具放行」，会在独立窗口里列出当前可用的**全部工具**（含第三方 MCP、当前经理继承面的工具），勾选即放行、取消即禁用：
 
-- 默认族（只读白名单 / 记忆 / IM）取消勾选会写进 `managerDeniedTools`；其它工具勾选会写进 `managerExtraTools`。
+- 默认族（只读白名单 / 记忆 / IM / 定时任务）取消勾选会写进 `managerDeniedTools`；其它工具勾选会写进 `managerExtraTools`。
 - 派活工具（`paihuo_*`）固定在工具面上、不可关闭；配置里写它们会直接报错。
 - 保存后立刻重建已有的经理作用域，不需要重开会话；`tools.restrict` 的 allow/deny 与工具守卫都会按新配置生效。
 - 只影响**继承面**：注册在经理作用域里的工具（`paihuo_*`）不受影响；如果某个第三方工具根本不在清单里，说明它没有注册到全局或当前预设祖先层。
@@ -260,7 +274,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 ## 开发与测试
 
 ```powershell
-npm test    # 152 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、用户图片转发（会话 / Codex）、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法/工程师活跃度
+npm test    # 153 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、用户图片转发（会话 / Codex）、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法/工程师活跃度
 ```
 
 `test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截、用户图片转发，以及假的 Codex CLI（执行、resume、图片 `-i`、失败、取消、worktree、模型目录）。
@@ -281,7 +295,8 @@ npm test    # 152 个用例：纯策略、状态、待办状态机与强制核�
 - 待办强制核对依赖 DSH 的 `agent/turn-stopping`：旧 Host 没有该事件时不会提醒，其余功能正常。
 - 强制核对发生在回复之后：第一次回复已经发出，提醒后的核对会在同一轮追加一条简短回复；连续忽略提醒最多 2 次后放行并记录 warning。核对只保证经理看到并有机会修正，不保证内容一定正确。
 - 合并任务的 worktree 与分支目前不会自动删除；需要时手动清理。
-- 经理工具面按白名单收窄（只读 + 记忆工具 `memory_*` + IM 工具 `dsh_im_*` + `paihuo_*`），Profile 级 MCP 工具（如浏览器）不会进入经理 prompt；守卫仍兜底拒绝白名单之外的调用，包括作用域安装之后才注册的工具。
+- 经理工具面按白名单收窄（只读 + 记忆工具 `memory_*` + IM 工具 `dsh_im_*` + 定时任务工具 `schedule_*` + `paihuo_*`），Profile 级 MCP 工具（如浏览器）不会进入经理 prompt；守卫仍兜底拒绝白名单之外的调用，包括作用域安装之后才注册的工具。
+- 定时任务依赖 base 组合里的 `ctx.schedule`（Web/桌面版默认包含）与经理预设挂载的 `@deepseek-ai/dsh-tool-schedule`；缺任一条件时经理看不到 `schedule_*`，其余功能不受影响。
 - 记忆插件（meow-memory 的 `memory_*`）整族放行：记忆库在 `$DSH_HOME` 下，不属于工作区改动，所以经理可以直接 `memory_remember` / `memory_update`，空闲触发的记忆整理（dream）也能真正落库。
 - 经理提示段保持静态（不含实时工位数/工程师清单/待办数），避免每一步重装配 system prompt 时击穿整段上下文缓存；实时状态用 `paihuo_engineers` / `paihuo_tasks` 查询。
 - 问题表只展示 timed `ask_user_question` 产生的问题；预设改为 timed 之前的历史问题不会进入投影。`timeout: -1` 的 open 问题需要在 DSH 自带的问答面板里回答，问题表弹窗只提供打开入口。

@@ -315,6 +315,11 @@ export function createWorld(options = {}) {
     'dsh_im_return_file',
     'dsh_im_group_history',
     'dsh_im_group_file',
+    // 定时任务插件（dsh-tool-schedule）：经理排一次性任务，等 Codex 限额过去再继续。
+    'schedule_create',
+    'schedule_list',
+    'schedule_view',
+    'schedule_edit',
   ];
   services.tools = {
     schemas: () => hostToolNames.map((name) => ({ name })),

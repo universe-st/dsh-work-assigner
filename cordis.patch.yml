@@ -19,7 +19,7 @@
       config:
         id: paihuo
         name: 派活模式
-        description: 经理模式：只沟通、拆解、派发与验收，任务交给工程师会话执行；不直接改代码。支持问题表与待办。
+        description: 经理模式：只沟通、拆解、派发与验收，任务交给工程师会话执行；不直接改代码。支持问题表、待办与定时唤醒（等限额过去再继续）。
         order: 5
         plugins:
           - id: persona
@@ -28,6 +28,11 @@
               prefix: You are a manager agent powered by the {{model}} model. You delegate work to engineer sessions instead of doing it yourself.
           - id: time-context
             name: '@deepseek-ai/dsh-time-context'
+          # 定时任务：Codex 撞上用量限额时，经理排一个一次性任务，到点由 Host
+          # 唤醒经理会话继续派活（schedule_* 在插件里按前缀放行给经理）。
+          # 依赖 base 组合里的 ctx.schedule；没有该服务时这一行静默不生效。
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
             config:

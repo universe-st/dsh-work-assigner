@@ -167,6 +167,13 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
     assert.ok(!restriction.deny.includes(name), `${name} must not be denied`);
   }
 
+  // 定时任务整族放行：Codex 撞上用量限额时，经理要能排一个一次性任务，
+  // 到点由 Host 唤醒本会话继续派活；否则只能干等或反复重试。
+  for (const name of ['schedule_create', 'schedule_list', 'schedule_view', 'schedule_edit']) {
+    assert.ok(restriction.allow.includes(name), `${name} must stay visible to the manager`);
+    assert.ok(!restriction.deny.includes(name), `${name} must not be denied`);
+  }
+
   // 预设作用域里的工具不受 restrict 掩码影响，真正兜底的是守卫。
   const guard = world.guards.find((entry) => entry.agentId === manager.id);
   assert.ok(guard, 'manager must install a tool guard');
@@ -183,6 +190,9 @@ test('manager mode delegates, engineer reports, manager is woken', async () => {
   // IM 工具即使在 restrict 之后才注册，也要由守卫放行。
   assert.equal(guard.guard({ name: 'dsh_im_return_file' }), undefined);
   assert.equal(guard.guard({ name: 'dsh_im_group_history' }), undefined);
+  // 定时任务同理：排唤醒不是「经理动手」。
+  assert.equal(guard.guard({ name: 'schedule_create' }), undefined);
+  assert.equal(guard.guard({ name: 'schedule_edit' }), undefined);
 
   const result = await runDispatch(world, manager, {
     title: '补充 README 说明',
