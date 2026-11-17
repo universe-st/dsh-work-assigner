@@ -37,6 +37,15 @@ async function completeTurn(world, engineerId, turn = 1) {
   await settle(60);
 }
 
+/** 让某个会话工程师跑完一轮但回合出错：任务结算为 failed。 */
+async function failTurn(world, engineerId, turn = 1) {
+  const engineer = world.agents.get(engineerId);
+  assert.ok(engineer, `engineer ${engineerId} should exist`);
+  world.append(engineer.session, 'turn/start', { turn });
+  world.append(engineer.session, 'turn/end', { turn, reason: { kind: 'error' } });
+  await settle(60);
+}
+
 function engineerIds(world) {
   return Object.keys(world.stored.engineers);
 }
@@ -249,4 +258,126 @@ test('paihuo_engineers 展示类型与最近活跃时间', async () => {
   assert.ok(Number.isInteger(row.last_active_at));
   assert.match(listed.text, /开发｜/);
   assert.match(listed.text, /最近活跃/);
+});
+
+test('失败一次仍然复用，回执点名上次失败；成功一次后计数清零', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+
+  const first = await runDispatch(world, manager, { title: '实现登录页', brief: '改样式。' });
+  await failTurn(world, first.engineer);
+  assert.equal(world.stored.tasks[first.task_id].status, 'failed');
+  assert.equal(world.stored.engineers[first.engineer].failureStreak, 1);
+  assert.ok(world.stored.engineers[first.engineer].lastFailure.message.length > 0);
+
+  // 只失败过一次：仍然复用，但回执必须把上次失败摊开。
+  const second = await runDispatch(world, manager, { title: '登录页补验证码', brief: '同一文件的另一处小改。' });
+  assert.equal(second.engineer, first.engineer);
+  assert.match(second.text, /上次任务失败/);
+  assert.match(second.text, /再连续失败 1 次/);
+
+  // 成功一次即清零：一条健康的会话不该带着旧账被隔离。
+  await completeTurn(world, second.engineer);
+  assert.equal(world.stored.engineers[second.engineer].failureStreak, undefined);
+  assert.equal(world.stored.engineers[second.engineer].lastFailure, undefined);
+
+  const third = await runDispatch(world, manager, { title: '登录页错误提示', brief: '加错误提示。' });
+  assert.equal(third.engineer, first.engineer);
+  assert.doesNotMatch(third.text, /上次任务失败/);
+});
+
+test('连续失败到阈值后不再自动复用，别处新建会话，回执写明隔离', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+
+  const first = await runDispatch(world, manager, { title: '实现登录页', brief: '改样式。' });
+  await failTurn(world, first.engineer);
+  const second = await runDispatch(world, manager, { title: '登录页补验证码', brief: '加验证码。' });
+  assert.equal(second.engineer, first.engineer, '只失败一次时仍应复用');
+  await failTurn(world, second.engineer);
+  assert.equal(world.stored.engineers[first.engineer].failureStreak, 2);
+  assert.equal(world.stored.engineers[first.engineer].lastFailure.reason, 'error');
+
+  // 第三次必须换新会话：不能继续把任务喂给一条连续失败的会话。
+  const third = await runDispatch(world, manager, { title: '登录页样式微调', brief: '再调一版样式。' });
+  assert.notEqual(third.engineer, first.engineer);
+  const task = world.stored.tasks[third.task_id];
+  assert.equal(task.forceNew, true);
+  assert.match(task.reuseMissReason, /连续失败 2 次被隔离/);
+  assert.match(third.text, /会话复用：无/);
+  assert.match(third.text, /被隔离/);
+});
+
+test('显式 engineer 仍能派给已隔离的会话，但回执要警告', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+
+  const first = await runDispatch(world, manager, { title: '实现登录页', brief: '改样式。' });
+  await failTurn(world, first.engineer);
+  const second = await runDispatch(world, manager, {
+    title: '登录页补验证码',
+    brief: '加验证码。',
+    engineer: first.engineer,
+  });
+  await failTurn(world, second.engineer);
+  assert.equal(world.stored.engineers[first.engineer].failureStreak, 2);
+
+  const forced = await runDispatch(world, manager, {
+    title: '登录页收尾',
+    brief: '把样式收一下。',
+    engineer: first.engineer,
+  });
+  assert.equal(forced.engineer, first.engineer, '显式指定不受隔离影响');
+  assert.match(forced.text, /已连续失败 2 次并被隔离/);
+});
+
+test('paihuo_engineers 标出连续失败与隔离状态', async () => {
+  const world = createWorld({ config: { worktree: false } });
+  const manager = await boot(world);
+
+  const first = await runDispatch(world, manager, { title: '实现登录页', brief: '改样式。' });
+  await failTurn(world, first.engineer);
+
+  const definition = world.toolDefs.get('paihuo_engineers');
+  const listed = await definition.execute({}, {
+    agent: manager,
+    callId: 'call-engineers',
+    signal: new AbortController().signal,
+  });
+  const row = listed.engineers.find((entry) => entry.session_id === first.engineer);
+  assert.equal(row.failure_streak, 1);
+  assert.equal(row.quarantined, false);
+  assert.ok(typeof row.last_failure?.message === 'string');
+  assert.match(listed.text, /连续失败 1 次/);
+  assert.doesNotMatch(listed.text, /已隔离/);
+
+  const second = await runDispatch(world, manager, {
+    title: '登录页补验证码',
+    brief: '加验证码。',
+    engineer: first.engineer,
+  });
+  await failTurn(world, second.engineer, 2);
+  const after = await definition.execute({}, {
+    agent: manager,
+    callId: 'call-engineers-2',
+    signal: new AbortController().signal,
+  });
+  const rowAfter = after.engineers.find((entry) => entry.session_id === first.engineer);
+  assert.equal(rowAfter.quarantined, true);
+  assert.match(after.text, /连续失败 2 次（已隔离，不再自动复用）/);
+});
+
+test('quarantineAfterFailures=0 时关闭隔离', async () => {
+  const world = createWorld({ config: { worktree: false, quarantineAfterFailures: 0 } });
+  const manager = await boot(world);
+
+  const first = await runDispatch(world, manager, { title: '实现登录页', brief: '改样式。' });
+  await failTurn(world, first.engineer);
+  const second = await runDispatch(world, manager, { title: '登录页补验证码', brief: '加验证码。' });
+  assert.equal(second.engineer, first.engineer);
+  await failTurn(world, second.engineer);
+  assert.equal(world.stored.engineers[first.engineer].failureStreak, 2);
+
+  const third = await runDispatch(world, manager, { title: '登录页收尾', brief: '收尾。' });
+  assert.equal(third.engineer, first.engineer, '隔离关闭后仍然复用');
 });

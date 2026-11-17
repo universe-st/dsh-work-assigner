@@ -71,6 +71,9 @@ Dispatching reuses existing sessions by default instead of creating one every ti
   - An explicit `engineer` is never blocked by kind; the receipt just notes a cross-pool choice (e.g. a test task attached to the session that wrote the code).
 - **Force a new session**: `reuse: "new"`. **Pin one**: `engineer` (see `paihuo_engineers` for ids, kinds and last-active times).
 - Reuse keeps the session's existing worktree/branch; receipts state "会话复用：<id> (same-project dev session, active 12 minutes ago)", and explain why nothing was reused when a new engineer is created.
+- **Repeated failures quarantine a session**: every `failed` settlement counts (`done`/`blocked` resets the count). After `quarantineAfterFailures` (2 by default) consecutive failures the session is skipped by **automatic** reuse — the next task creates a fresh engineer, and receipts plus `paihuo_engineers` report "连续失败 N 次（已隔离）" with the last failure reason. An explicit `engineer` still works (with a warning). Cancellations and plugin reloads do not count; upgrading to this version **backfills the streak from the task ledger**, so sessions that already failed twice are quarantined right after restart.
+- **A broken Codex session heals once**: if resuming an existing Codex session fails without producing any output (the session cannot be attached, rather than the task being botched), the plugin retries the same task once on a fresh Codex session instead of failing it; the old thread files stay on disk. Account/quota faults (`workspace routing`, `out of credits`, ...) are not retried — a fresh session fails the same way.
+- **Environment faults are called out**: a failed report that says "判断提示：这更像执行环境/账号侧故障" means retry once on a fresh session; if that fails for the same reason it is an outage — stop dispatching, hand the state to the user (or schedule a task to wait for the quota), and do not keep dispatching.
 
 ### Acceptance mode
 
@@ -195,7 +198,7 @@ Manager (visible only in manager sessions):
 | Tool | Purpose |
 |---|---|
 | `paihuo_dispatch` | Dispatch a task; supports `kind` (`dev`/`test`/`general`, which session pool to reuse), `reuse` (`auto` by default, `"new"` forces a fresh session), `engineer`, `project_path`, `model`, `worktree`, `base_branch`, `priority:"urgent"`, and `images` (forward the user's recent images with the task; `"none"` disables it). In Codex mode `model` is a Codex model id |
-| `paihuo_engineers` | Executors under this manager and their state (kind, last active time); Codex engineers show their Codex session id and are reusable |
+| `paihuo_engineers` | Executors under this manager and their state (kind, last active time, consecutive failures and last failure reason; quarantined ones are marked); Codex engineers show their Codex session id and are reusable |
 | `paihuo_tasks` / `paihuo_task` | Task ledger / single task detail; `paihuo_task` omits the brief by default, use `include_brief: true` |
 | `paihuo_transcript` | Recent conversation and commands of one engineer, for judging what it is doing and whether it is stuck: session events for session engineers, CLI transcripts for Codex. Pass `engineer` or `task_id`; `limit` defaults to 12, `include_tools: false` hides tool activity |
 | `paihuo_message` | Send a follow-up to an engineer; `mode:"queue"` runs after the current turn, `mode:"steer"` interrupts/inserts into it. An idle engineer's supplementary turn reports back automatically; Codex mode resumes the same session |
@@ -228,6 +231,7 @@ Codex mode has no `paihuo_report`: Codex's final answer is the report. The plugi
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | Concurrent engineer limit per project / overall |
 | `maxEngineerQueue` | `6` | Per-engineer queue limit; new tasks are rejected when full |
 | `reuseActiveMinutes` | `180` | Session reuse window (minutes): only same-kind engineers active within it are reused; `0` = unlimited |
+| `quarantineAfterFailures` | `2` | Consecutive-failure quarantine: after this many consecutive failures a session stops being reused automatically (an explicit `engineer` still works); `0` disables quarantine |
 | `worktree` | `true` | One git worktree and branch per engineer |
 | `acceptance` | `self` | Acceptance mode: `self` = the engineer runs the tests and reports; `independent` = an acceptance task is dispatched automatically after a dev task succeeds (see "Acceptance mode") |
 | `engineerPermission` | `null` | Fallback preset for engineers when the manager preset is `custom` (not used in Codex mode) |
@@ -274,7 +278,7 @@ The manager sees read-only tools, memory tools (`memory_*`), IM tools (`dsh_im_*
 ## Development and tests
 
 ```powershell
-npm test    # 153 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
+npm test    # 164 cases: pure policy, state, todo state machine and forced todo check, main-workspace lock, supplement reports, IM chat routing, projection, config, prompt/report, user-image forwarding (session / Codex), Remote manifest + simulated host integration + Codex CLI/menu/model catalog + user-image modality checks + client assembly/syntax/engineer activity
 ```
 
 `test/harness.mjs` provides a fake host with just the services this plugin needs, covering engineer creation on dispatch, task prompts, report-driven manager wake-up, workstation queueing and release, the manager tool guard, permission path blocking, a fake Codex CLI (exec, resume, images via `-i`, failure, cancellation, worktree, model catalog), and user-image forwarding.

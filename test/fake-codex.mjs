@@ -7,6 +7,9 @@
  *
  * Prompt 里的标记：
  * - PAIHUO_FAKE_FAIL：输出 turn.failed 并以 1 退出。
+ * - PAIHUO_FAKE_FAIL_ON_RESUME：只在 `exec resume` 时失败——模拟「这条会话接不上」。
+ * - PAIHUO_FAKE_ACCOUNT_FAIL：以账号侧故障（workspace routing）失败，换会话也救不了。
+ * - PAIHUO_FAKE_CRASH：还没输出任何 JSON 就写 stderr 并以 1 退出（模拟 CLI 崩溃/磁盘写满）。
  * - PAIHUO_FAKE_HANG：不返回，直到被测试取消。
  * - PAIHUO_FAKE_DELAY_MS=<n>：延迟 n 毫秒后返回。
  * - PAIHUO_FAKE_LINGER=<n>：回报 turn.completed 后继续存活 n 毫秒（模拟
@@ -111,12 +114,34 @@ const delayMatch = /PAIHUO_FAKE_DELAY_MS=(\d+)/.exec(prompt);
 const delay = delayMatch === null ? 0 : Number(delayMatch[1]);
 if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
 
+// CLI 在写出任何 JSON 之前就崩了（例如磁盘写满）：stdout 空、stderr 一句话、退出码 1。
+if (prompt.includes('PAIHUO_FAKE_CRASH')) {
+  process.stderr.write('codex: fatal error: failed to write session rollout (ENOSPC)\n');
+  process.exit(1);
+}
+
 if (prompt.includes('PAIHUO_FAKE_HANG')) {
   await new Promise((resolve) => setTimeout(resolve, 3000));
 }
 
 process.stdout.write(`${JSON.stringify({ type: 'thread.started', thread_id: sessionId })}\n`);
-if (prompt.includes('PAIHUO_FAKE_FAIL')) {
+if (prompt.includes('PAIHUO_FAKE_ACCOUNT_FAIL')) {
+  process.stdout.write(`${JSON.stringify({
+    type: 'turn.failed',
+    error: { message: 'workspace routing discovery failed' },
+  })}\n`);
+  process.exit(1);
+}
+if (prompt.includes('PAIHUO_FAKE_FAIL_ON_RESUME') && isResume) {
+  process.stdout.write(`${JSON.stringify({
+    type: 'turn.failed',
+    error: { message: 'fake resume failure (PAIHUO_FAKE_FAIL_ON_RESUME)' },
+  })}\n`);
+  process.exit(1);
+}
+// 注意：`PAIHUO_FAKE_FAIL_ON_RESUME` 以 `PAIHUO_FAKE_FAIL` 开头，所以这里要卡边界，
+// 否则「只在 resume 时失败」的场景会被通用失败分支提前吃掉。
+if (/PAIHUO_FAKE_FAIL(?![_A-Z])/.test(prompt)) {
   process.stdout.write(`${JSON.stringify({
     type: 'turn.failed',
     error: { message: 'fake codex failure (PAIHUO_FAKE_FAIL)' },

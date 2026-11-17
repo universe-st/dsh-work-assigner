@@ -908,6 +908,119 @@ test('failed codex runs become failed tasks with diagnostics', async () => {
   }
 });
 
+test('codex 续接会话失败且一条输出都没有时，换新会话重试一次而不是判红', async () => {
+  const log = beginCodexLog();
+  const previousThread = process.env.PAIHUO_FAKE_CODEX_THREAD;
+  process.env.PAIHUO_FAKE_CODEX_THREAD = 'fake-thread-1';
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const first = await runDispatch(world, manager, { title: '首轮', brief: '正常执行。' });
+    await waitFor(() => world.stored.tasks[first.task_id]?.status === 'done');
+    assert.equal(world.stored.engineers[first.engineer].codexSessionId, 'fake-thread-1');
+
+    // 让「续接旧会话」失败、新会话正常：模拟一条接不上的坏会话。
+    process.env.PAIHUO_FAKE_CODEX_THREAD = 'fake-thread-2';
+    const second = await runDispatch(world, manager, {
+      title: '续接失败后自愈',
+      brief: '执行。PAIHUO_FAKE_FAIL_ON_RESUME',
+      engineer: first.engineer,
+    });
+    await waitFor(() => world.stored.tasks[second.task_id]?.status === 'done', 8000);
+
+    const runs = readCodexRuns(log.path);
+    assert.equal(runs.length, 3, '首轮 fresh + 续接失败 + 新会话重试');
+    assert.equal(runs[1].resume, true);
+    assert.equal(runs[1].sessionId, 'fake-thread-1');
+    assert.equal(runs[2].resume, false, '重试必须开新线程，不能继续续接坏会话');
+    const task = world.stored.tasks[second.task_id];
+    assert.match(task.report.summary, /FAKE_CODEX_OK/);
+    assert.equal(world.stored.engineers[first.engineer].codexSessionId, 'fake-thread-2');
+    assert.equal(world.stored.engineers[first.engineer].failureStreak, undefined);
+  } finally {
+    if (previousThread === undefined) delete process.env.PAIHUO_FAKE_CODEX_THREAD;
+    else process.env.PAIHUO_FAKE_CODEX_THREAD = previousThread;
+    log.cleanup();
+  }
+});
+
+test('CLI 崩溃时把 stderr 带进诊断，而不是只说退出码', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, {
+      title: 'CLI 崩溃',
+      brief: '执行。PAIHUO_FAKE_CRASH',
+    });
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'failed');
+    const task = world.stored.tasks[result.task_id];
+    assert.match(task.report.blockers, /退出码 1/);
+    assert.match(task.report.blockers, /ENOSPC/, 'stderr 必须并进诊断');
+    assert.equal(readCodexRuns(log.path).length, 1, '没有任何输出的崩溃不该被当成「会话接不上」去重试');
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('codex 账号侧故障不重试，回报写明是执行环境问题', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const result = await runDispatch(world, manager, {
+      title: '账号故障',
+      brief: '执行。PAIHUO_FAKE_ACCOUNT_FAIL',
+    });
+    await waitFor(() => world.stored.tasks[result.task_id]?.status === 'failed');
+    await settle(200);
+    assert.equal(readCodexRuns(log.path).length, 1, '账号/后端故障换会话也没用，不该重试');
+
+    const task = world.stored.tasks[result.task_id];
+    assert.match(task.report.blockers, /workspace routing discovery failed/);
+    const report = world.prompts.filter(
+      (entry) => entry.sessionId === manager.id && entry.text.includes('【派活系统回报'),
+    ).at(-1);
+    assert.match(report.text, /判断提示：这更像执行环境\/账号侧故障/);
+    assert.match(report.text, /新会话也以同样理由失败就是整体故障/);
+    assert.equal(world.stored.engineers[result.engineer].failureStreak, 1);
+  } finally {
+    log.cleanup();
+  }
+});
+
+test('连续失败两次的 Codex 会话被隔离，下一单新建', async () => {
+  const log = beginCodexLog();
+  try {
+    const world = createWorld({ config: { engineerBackend: 'codex', worktree: false } });
+    const manager = await boot(world);
+    await enterMode(world, manager);
+
+    const first = await runDispatch(world, manager, { title: '失败一', brief: '执行。PAIHUO_FAKE_FAIL' });
+    await waitFor(() => world.stored.tasks[first.task_id]?.status === 'failed');
+    const second = await runDispatch(world, manager, { title: '失败二', brief: '执行。PAIHUO_FAKE_FAIL' });
+    assert.equal(second.engineer, first.engineer, '只失败一次时仍复用');
+    await waitFor(() => world.stored.tasks[second.task_id]?.status === 'failed');
+    assert.equal(world.stored.engineers[first.engineer].failureStreak, 2);
+
+    const third = await runDispatch(world, manager, { title: '换个会话', brief: '正常执行。' });
+    assert.notEqual(third.engineer, first.engineer, '隔离后不能继续复用同一条会话');
+    const task = world.stored.tasks[third.task_id];
+    assert.equal(task.forceNew, true);
+    assert.match(task.reuseMissReason, /连续失败 2 次被隔离/);
+    assert.match(third.text, /被隔离/);
+    await waitFor(() => world.stored.tasks[third.task_id]?.status === 'done');
+  } finally {
+    log.cleanup();
+  }
+});
+
 test('cancelling a codex task kills the CLI process and keeps it cancelled', async () => {
   const log = beginCodexLog();
   try {

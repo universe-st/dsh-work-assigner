@@ -75,6 +75,15 @@ test('reuse window accepts 0 (unlimited) and rejects bad numbers', () => {
   assert.throws(() => resolveConfig({ reuseActiveMinutes: '180' }), /reuseActiveMinutes/);
 });
 
+test('quarantine after failures defaults to 2 and accepts 0 (off)', () => {
+  assert.equal(resolveConfig(undefined).quarantineAfterFailures, 2);
+  assert.equal(resolveConfig({ quarantineAfterFailures: 0 }).quarantineAfterFailures, 0);
+  assert.equal(resolveConfig({ quarantineAfterFailures: 3 }).quarantineAfterFailures, 3);
+  assert.throws(() => resolveConfig({ quarantineAfterFailures: -1 }), /quarantineAfterFailures/);
+  assert.throws(() => resolveConfig({ quarantineAfterFailures: 1.5 }), /quarantineAfterFailures/);
+  assert.throws(() => resolveConfig({ quarantineAfterFailures: '2' }), /quarantineAfterFailures/);
+});
+
 test('engineer models are normalized', () => {
   const config = resolveConfig({
     engineerModels: [{ provider: 'p', model: 'm', description: ' 长上下文 ' }],

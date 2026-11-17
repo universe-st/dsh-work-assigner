@@ -71,6 +71,9 @@ plugin_manager install_bundle { target: "D:\\Workspace\\myworks\\dsh-work-assign
 - **强制新会话**：传 `reuse: "new"`。
 - **指定会话**：传 `engineer`（`paihuo_engineers` 可查会话 id、类型与最近活跃时间），此时按该会话现有的工作目录与队列执行。
 - 复用会让新任务沿用该会话已有的 worktree/分支，回执里会写明「会话复用：<会话 id>（同项目开发会话，最近活跃 X 分钟前）」，没复用上也会写明原因（例如「开发会话最近都没有活跃过（时间窗 3 小时）」）。
+- **连续失败会被隔离**：一条会话每结算一次 `failed` 记一次（`done`/`blocked` 清零），连续失败到 `quarantineAfterFailures`（默认 2）次就不再参与**自动**复用——下一单会新建会话，回执与 `paihuo_engineers` 里写「连续失败 N 次（已隔离）」和上次失败原因。显式传 `engineer` 仍可派进去（会被警告）。取消/插件重载导致的中断不计入；升级到本版本时会按任务台账**补上存量会话的失败次数**，所以已经连失败两次的会话重启后就直接被隔离。
+- **Codex 会话接不上会自愈一次**：续接旧 Codex 会话的失败且整轮一条输出都没有（说明是会话接不上，而不是任务做砸了）时，插件自动换一条新 Codex 会话重试一次，任务不会直接判红；旧线程文件保留在磁盘上。账号/额度类故障（`workspace routing`、`out of credits` 等）不重试——换会话一样失败。
+- **环境故障会被点名**：失败的回报里出现「判断提示：这更像执行环境/账号侧故障」时，先换新会话重试一次；**新会话也以同样理由失败就是整体故障**，应停止派活、把现场交给用户（或排定时任务等额度恢复），不要继续连派。
 
 ### 验收方式
 
@@ -195,7 +198,7 @@ Codex 模式下，经理会话右上角会出现 🤖 入口：
 | 工具 | 说明 |
 |---|---|
 | `paihuo_dispatch` | 派发任务；支持 `kind`（`dev`/`test`/`general`，决定复用哪类会话）、`reuse`（默认 `auto` 复用活跃会话，`"new"` 强制新建）、`engineer`（挂到已有会话后面，忙就排队）、`project_path`、`model`、`worktree`、`base_branch`、`priority:"urgent"`、`images`（默认把用户最近发的图片随任务转给工程师，`"none"` 关闭）。Codex 模式下 `model` 是 Codex 模型 id |
-| `paihuo_engineers` | 名下执行者与状态（类型、最近活跃时间）；Codex 工程师会显示 Codex session id，可复用 |
+| `paihuo_engineers` | 名下执行者与状态（类型、最近活跃时间、连续失败次数与上次失败原因，已隔离的会标出）；Codex 工程师会显示 Codex session id，可复用 |
 | `paihuo_tasks` / `paihuo_task` | 任务台账 / 单任务详情；`paihuo_task` 默认省略任务说明，`include_brief: true` 才返回 |
 | `paihuo_transcript` | 看某个工程师最近的对话与命令，判断它在做什么、是否卡住：会话工程师读会话事件，Codex 工程师读 CLI 转录。传 `engineer` 或 `task_id`；`limit` 默认 12，`include_tools: false` 只看双方发言 |
 | `paihuo_message` | 给工程师追加消息；`mode:"queue"` 排到当前轮之后，`mode:"steer"` 中断/插入当前轮。空闲工程师的补充轮结束后会自动回报；Codex 模式下通过 resume 续接 |
@@ -228,6 +231,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 | `workstationsPerProject` / `totalWorkstations` | `2` / `4` | 单项目 / 全局同时运行的工程师上限 |
 | `maxEngineerQueue` | `6` | 单工程师排队上限，满了拒绝新任务 |
 | `reuseActiveMinutes` | `180` | 会话复用时间窗（分钟）：只复用这么久之内活跃过的同类型工程师会话；`0` = 不限时间窗 |
+| `quarantineAfterFailures` | `2` | 连续失败隔离阈值：一条会话连续失败这么多次后不再参与自动复用（显式传 `engineer` 仍可用）；`0` = 关闭隔离 |
 | `worktree` | `true` | 每个工程师一个 git worktree 与分支 |
 | `acceptance` | `self` | 验收方式：`self` = 开发自主验收（工程师自己跑测试并写进报告）；`independent` = 独立工程师验收（开发任务成功后自动派验收任务，见「验收方式」） |
 | `engineerPermission` | `null` | 经理权限为 `custom` 时工程师用的兜底预设（Codex 模式不适用） |
@@ -274,7 +278,7 @@ Codex 模式没有 `paihuo_report`：Codex 的最终回答就是本轮报告，�
 ## 开发与测试
 
 ```powershell
-npm test    # 153 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、用户图片转发（会话 / Codex）、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法/工程师活跃度
+npm test    # 164 个用例：纯策略、状态、待办状态机与强制核对、主工作区互斥、补充消息回报、IM 会话路由、投影、配置、提示段/回报、用户图片转发（会话 / Codex）、Remote 声明 + 模拟 Host 集成 + Codex CLI/菜单/模型目录 + 客户端装配/语法/工程师活跃度
 ```
 
 `test/harness.mjs` 搭了一个只含本插件所需服务面的假 Host，覆盖派发建工程师、任务提示词、回报唤醒经理、工位排队与释放、经理工具守卫、权限路径拦截、用户图片转发，以及假的 Codex CLI（执行、resume、图片 `-i`、失败、取消、worktree、模型目录）。

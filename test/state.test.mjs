@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  backfillEngineerHealth,
   createEmptyState,
   createStateStore,
   hydrateState,
@@ -145,6 +146,43 @@ test('pruneTasks keeps recent finals and repairs engineer references', () => {
   assert.equal(state.tasks.t1, undefined);
   assert.deepEqual(state.engineers.e1.queue, ['t3']);
   assert.equal(state.engineers.e1.activeTaskId, undefined);
+});
+
+test('backfill seeds the failure streak of legacy engineers from the task ledger', () => {
+  const state = createEmptyState();
+  const engineer = (sessionId) => ({
+    sessionId,
+    managerId: 'm1',
+    projectPath: 'C:\\work\\demo',
+    projectKey: 'c:\\work\\demo',
+    model: null,
+    worktree: null,
+    status: 'idle',
+    queue: [],
+    createdAt: 1,
+  });
+  state.engineers.e1 = engineer('e1');
+  state.engineers.e2 = engineer('e2');
+  state.tasks.t1 = task({
+    taskId: 't1', engineerId: 'e1', status: 'failed', endedAt: 10,
+    report: { outcome: 'failed', summary: 'Codex 运行失败。', blockers: 'workspace routing discovery failed', reason: 'failed' },
+  });
+  state.tasks.t2 = task({
+    taskId: 't2', engineerId: 'e1', status: 'failed', endedAt: 20,
+    report: { outcome: 'failed', summary: 'Codex 运行失败。', blockers: 'workspace routing discovery failed', reason: 'failed' },
+  });
+  state.tasks.t3 = task({ taskId: 't3', engineerId: 'e2', status: 'done', endedAt: 30 });
+  state.tasks.t4 = task({ taskId: 't4', engineerId: 'e2', status: 'failed', endedAt: 40 });
+
+  assert.equal(backfillEngineerHealth(state), 2);
+  assert.equal(state.engineers.e1.failureStreak, 2);
+  assert.match(state.engineers.e1.lastFailure.message, /workspace routing discovery failed/);
+  assert.equal(state.engineers.e1.lastFailure.reason, 'failed');
+  // 只数「从最后一次结算往前连续」的失败：e2 是「成功→失败」，只记 1 次。
+  assert.equal(state.engineers.e2.failureStreak, 1);
+  // 幂等：再跑一次不会把已有计数翻倍。
+  assert.equal(backfillEngineerHealth(state), 0);
+  assert.equal(state.engineers.e1.failureStreak, 2);
 });
 
 test('state store serializes writes', async () => {
