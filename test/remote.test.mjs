@@ -168,3 +168,11 @@ test('client contribution and header slots stay wired to the same ids', () => {
   assert.match(source, /userQuestions/);
   assert.match(source, /userQuestionPanels/);
 });
+
+test('question answers read the Remote namespace without a hard inject', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  // ctx.remote.<namespace> throws `cannot get property ... without inject` unless
+  // the service is declared in inject; the namespace must be read through ctx.get.
+  assert.match(source, /readRemoteNamespace\(ctx, 'userQuestions'\)/);
+  assert.doesNotMatch(source, /ctx\.remote\?\.userQuestions/);
+});
